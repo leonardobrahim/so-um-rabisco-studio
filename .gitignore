@@ -1,0 +1,17 @@
+# Python / Backend
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Projetos e arquivos temporários de mídia/render
+projetos/
+template-hyperframes/assets_atual/
+*.mp3
+*.mp4
+*.wav
+*.m4a

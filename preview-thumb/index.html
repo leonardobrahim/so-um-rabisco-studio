@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Preview Mobile - Só um Rabisco</title>
+    <style>
+        :root {
+            --bg-app: #111318;
+            --bg-panel: #1a1d24;
+            --border-panel: #2b303b;
+            --text-main: #f1f3f5;
+            --text-muted: #9aa0a6;
+            --accent: #ffc928;
+            --ok: #2ecc71;
+            --warn: #f39c12;
+            --err: #ff3b30;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            background-color: var(--bg-app);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            gap: 40px;
+            padding: 32px 20px;
+        }
+
+        /* Painel de Controles (Esquerda) */
+        .controls {
+            width: 100%;
+            max-width: 440px;
+            background: var(--bg-panel);
+            border: 1px solid var(--border-panel);
+            border-radius: 16px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .controls h1 {
+            font-size: 20px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .badge-canal {
+            background: var(--accent);
+            color: #111;
+            font-size: 11px;
+            font-weight: 800;
+            padding: 3px 8px;
+            border-radius: 6px;
+            text-transform: uppercase;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .field label {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .dropzone {
+            border: 2px dashed #3b4252;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: 0.2s;
+            background: #14171d;
+        }
+
+        .dropzone:hover,
+        .dropzone.dragover {
+            border-color: var(--accent);
+            background: #1e222b;
+        }
+
+        .dropzone p {
+            font-size: 13px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .dropzone strong {
+            color: var(--accent);
+        }
+
+        input[type="text"],
+        textarea {
+            width: 100%;
+            background: #14171d;
+            border: 1px solid #323846;
+            border-radius: 10px;
+            padding: 12px;
+            color: var(--text-main);
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input[type="text"]:focus,
+        textarea:focus {
+            border-color: var(--accent);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 68px;
+        }
+
+        .row-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .metrics {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .pill-metric {
+            font-size: 12px;
+            font-weight: 600;
+            padding: 5px 10px;
+            border-radius: 8px;
+            background: #232731;
+            color: var(--text-muted);
+        }
+
+        .pill-metric.ok {
+            background: rgba(46, 204, 113, 0.15);
+            color: var(--ok);
+        }
+
+        .pill-metric.warn {
+            background: rgba(243, 156, 18, 0.15);
+            color: var(--warn);
+        }
+
+        .pill-metric.err {
+            background: rgba(255, 59, 48, 0.15);
+            color: var(--err);
+        }
+
+        .theme-switch {
+            display: flex;
+            background: #14171d;
+            padding: 4px;
+            border-radius: 10px;
+            border: 1px solid #323846;
+        }
+
+        .theme-switch button {
+            flex: 1;
+            padding: 8px;
+            border: none;
+            border-radius: 7px;
+            background: transparent;
+            color: var(--text-muted);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .theme-switch button.active {
+            background: #2b303b;
+            color: #fff;
+        }
+
+        /* Moldura do Celular (Direita) */
+        .phone-frame {
+            width: 375px;
+            height: 780px;
+            border-radius: 42px;
+            border: 10px solid #262a34;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            transition: background-color 0.2s, color 0.2s;
+        }
+
+        /* Temas internos do YouTube Mobile */
+        .phone-frame.yt-dark {
+            --yt-bg: #0f0f0f;
+            --yt-chip: #272727;
+            --yt-chip-active: #f1f1f1;
+            --yt-chip-active-text: #0f0f0f;
+            --yt-text: #f1f1f1;
+            --yt-subtext: #aaaaaa;
+            --yt-border: #272727;
+        }
+
+        .phone-frame.yt-light {
+            --yt-bg: #ffffff;
+            --yt-chip: #f2f2f2;
+            --yt-chip-active: #0f0f0f;
+            --yt-chip-active-text: #ffffff;
+            --yt-text: #0f0f0f;
+            --yt-subtext: #606060;
+            --yt-border: #e5e5e5;
+        }
+
+        .phone-screen {
+            flex: 1;
+            background-color: var(--yt-bg);
+            color: var(--yt-text);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            font-family: "Roboto", Arial, sans-serif;
+        }
+
+        .phone-screen::-webkit-scrollbar {
+            width: 0;
+        }
+
+        /* Status Bar + Top Header YouTube */
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 20px 6px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .yt-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 14px;
+        }
+
+        .yt-logo {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-weight: 800;
+            font-size: 18px;
+            letter-spacing: -0.5px;
+        }
+
+        .yt-play-icon {
+            width: 26px;
+            height: 18px;
+            background: #ff0000;
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .yt-play-icon::after {
+            content: "";
+            border-style: solid;
+            border-width: 4px 0 4px 7px;
+            border-color: transparent transparent transparent #fff;
+            margin-left: 1px;
+        }
+
+        .yt-actions {
+            display: flex;
+            gap: 16px;
+            font-size: 16px;
+            opacity: 0.85;
+        }
+
+        .yt-chips {
+            display: flex;
+            gap: 8px;
+            padding: 6px 12px 10px;
+            overflow: hidden;
+            border-bottom: 1px solid var(--yt-border);
+        }
+
+        .chip {
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 500;
+            background: var(--yt-chip);
+            white-space: nowrap;
+        }
+
+        .chip.active {
+            background: var(--yt-chip-active);
+            color: var(--yt-chip-active-text);
+        }
+
+        /* Cards de Vídeo */
+        .video-card {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 16px;
+        }
+
+        .video-card.faded {
+            opacity: 0.45;
+        }
+
+        .thumb-box {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: #1c1f26;
+            overflow: hidden;
+        }
+
+        .thumb-box img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .thumb-placeholder {
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at 75% 50%, #2a183b 0%, #050811 75%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            text-align: center;
+            padding: 16px;
+        }
+
+        .thumb-placeholder span {
+            font-family: "Arial Black", Impact, sans-serif;
+            font-size: 22px;
+            letter-spacing: 0.5px;
+            text-shadow: 0 3px 10px rgba(0, 0, 0, 0.9);
+        }
+
+        .thumb-placeholder small {
+            color: var(--accent);
+            margin-top: 6px;
+            font-size: 11px;
+        }
+
+        .duration-badge {
+            position: absolute;
+            right: 8px;
+            bottom: 8px;
+            background: rgba(0, 0, 0, 0.82);
+            color: #fff;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 5px;
+            border-radius: 4px;
+        }
+
+        .video-info {
+            display: flex;
+            gap: 12px;
+            padding: 12px 12px 4px;
+            align-items: flex-start;
+        }
+
+        .avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            overflow: hidden;
+            background: #272727;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .meta {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .video-title {
+            font-size: 14px;
+            font-weight: 500;
+            line-height: 19px;
+            color: var(--yt-text);
+            display: -webkit-box;
+            line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            word-break: break-word;
+        }
+
+        .video-sub {
+            font-size: 12px;
+            color: var(--yt-subtext);
+            margin-top: 3px;
+            line-height: 16px;
+        }
+
+        .dots {
+            color: var(--yt-subtext);
+            font-size: 16px;
+            padding: 0 2px;
+        }
+
+        @media (max-width: 860px) {
+            body {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Painel de Teste -->
+    <div class="controls">
+        <h1>Preview de Clique <span class="badge-canal">Só um Rabisco</span></h1>
+
+        <div class="field">
+            <label>1. Thumbnail (16:9)</label>
+            <div class="dropzone" id="dropzone">
+                <p>Clique para escolher, arraste o arquivo ou aperte <strong>Ctrl + V</strong> em qualquer lugar da tela
+                </p>
+                <input type="file" id="fileInput" accept="image/*" hidden />
+            </div>
+        </div>
+
+        <div class="field">
+            <label>2. Título do Vídeo (Regra: 7 a 8 palavras)</label>
+            <textarea id="titleInput"
+                placeholder="Digite o título para testar no celular...">Por Que Você Sempre Fica Sem Dinheiro Todo Mês</textarea>
+            <div class="metrics">
+                <span class="pill-metric" id="wordCount">8 palavras</span>
+                <span class="pill-metric" id="charCount">46 caracteres</span>
+                <span class="pill-metric" id="cutStatus">Sem corte no celular</span>
+            </div>
+        </div>
+
+        <div class="row-2">
+            <div class="field">
+                <label>Duração</label>
+                <input type="text" id="durationInput" value="07:42" />
+            </div>
+            <div class="field">
+                <label>Views e Tempo</label>
+                <input type="text" id="metaInput" value="18 mil visualizações • há 4 horas" />
+            </div>
+        </div>
+
+        <div class="field">
+            <label>Tema do App no Celular</label>
+            <div class="theme-switch">
+                <button type="button" id="btnDark" class="active">Modo Escuro</button>
+                <button type="button" id="btnLight">Modo Claro</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Simulador Mobile -->
+    <div class="phone-frame yt-dark" id="phoneFrame">
+        <div class="phone-screen">
+            <div class="status-bar">
+                <span>21:42</span>
+                <span>5G • 84%</span>
+            </div>
+
+            <div class="yt-header">
+                <div class="yt-logo">
+                    <div class="yt-play-icon"></div>
+                    <span>YouTube</span>
+                </div>
+                <div class="yt-actions">
+                    <span>Cast</span>
+                    <span>Sino</span>
+                    <span>Busca</span>
+                </div>
+            </div>
+
+            <div class="yt-chips">
+                <div class="chip active">Tudo</div>
+                <div class="chip">Psicologia</div>
+                <div class="chip">Animação</div>
+                <div class="chip">Enviados recentemente</div>
+            </div>
+
+            <!-- Card Principal: Seu Vídeo -->
+            <div class="video-card">
+                <div class="thumb-box" id="thumbContainer">
+                    <div class="thumb-placeholder" id="thumbPlaceholder">
+                        <span>COLE SUA THUMB (CTRL+V)</span>
+                        <small>Padrão Paper Billions 16:9</small>
+                    </div>
+                    <img id="thumbPreview" alt="Thumbnail preview" style="display: none;" />
+                    <div class="duration-badge" id="durationPreview">07:42</div>
+                </div>
+
+                <div class="video-info">
+                    <!-- Avatar estilizado do protagonista -->
+                    <div class="avatar" style="background: #1b1f2a;">
+                        <svg width="36" height="36" viewBox="0 0 36 36">
+                            <rect width="36" height="36" fill="#232938" />
+                            <path d="M8 36 C8 27, 28 27, 28 36 Z" fill="#FFC928" stroke="#000" stroke-width="1.8" />
+                            <circle cx="18" cy="17" r="9.5" fill="#F8FAFC" stroke="#000" stroke-width="1.8" />
+                            <path d="M9 14 L7 9 L12 11 L15 6 L19 10 L23 6 L25 11 L29 10 L27 15 Z" fill="#111" />
+                            <ellipse cx="15" cy="17" rx="1.3" ry="2" fill="#111" />
+                            <ellipse cx="21" cy="17" rx="1.3" ry="2" fill="#111" />
+                        </svg>
+                    </div>
+
+                    <div class="meta">
+                        <div class="video-title" id="titlePreview">Por Que Você Sempre Fica Sem Dinheiro Todo Mês</div>
+                        <div class="video-sub" id="metaPreview">Só um rabisco • 18 mil visualizações • há 4 horas</div>
+                    </div>
+                    <div class="dots">⋮</div>
+                </div>
+            </div>
+
+            <!-- Card de Comparação no Feed -->
+            <div class="video-card faded">
+                <div class="thumb-box"
+                    style="background: linear-gradient(135deg, #1f3a52, #0d1b2a); display:flex; align-items:center; justify-content:center; color:#8da9c4; font-size:13px; font-weight:600;">
+                    Vídeo concorrente no feed
+                    <div class="duration-badge">12:15</div>
+                </div>
+                <div class="video-info">
+                    <div class="avatar"></div>
+                    <div class="meta">
+                        <div class="video-title">Como Organizar Sua Rotina Sem Perder Tempo</div>
+                        <div class="video-sub">Canal Exemplo • 94 mil visualizações • há 2 dias</div>
+                    </div>
+                    <div class="dots">⋮</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        const dropzone = document.getElementById("dropzone");
+        const fileInput = document.getElementById("fileInput");
+        const thumbPreview = document.getElementById("thumbPreview");
+        const thumbPlaceholder = document.getElementById("thumbPlaceholder");
+
+        const titleInput = document.getElementById("titleInput");
+        const titlePreview = document.getElementById("titlePreview");
+        const wordCount = document.getElementById("wordCount");
+        const charCount = document.getElementById("charCount");
+        const cutStatus = document.getElementById("cutStatus");
+
+        const durationInput = document.getElementById("durationInput");
+        const durationPreview = document.getElementById("durationPreview");
+        const metaInput = document.getElementById("metaInput");
+        const metaPreview = document.getElementById("metaPreview");
+
+        const phoneFrame = document.getElementById("phoneFrame");
+        const btnDark = document.getElementById("btnDark");
+        const btnLight = document.getElementById("btnLight");
+
+        function carregarImagem(file) {
+            if (!file || !file.type.startsWith("image/")) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                thumbPreview.src = e.target.result;
+                thumbPreview.style.display = "block";
+                thumbPlaceholder.style.display = "none";
+            };
+            reader.readAsDataURL(file);
+        }
+
+        dropzone.addEventListener("click", () => fileInput.click());
+        fileInput.addEventListener("change", (e) => carregarImagem(e.target.files[0]));
+
+        dropzone.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            dropzone.classList.add("dragover");
+        });
+
+        dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+
+        dropzone.addEventListener("drop", (e) => {
+            e.preventDefault();
+            dropzone.classList.remove("dragover");
+            carregarImagem(e.dataTransfer.files[0]);
+        });
+
+        // Suporte para Ctrl + V de imagem direto do navegador
+        window.addEventListener("paste", (e) => {
+            const items = e.clipboardData?.items || [];
+            for (const item of items) {
+                if (item.type.startsWith("image/")) {
+                    carregarImagem(item.getAsFile());
+                    break;
+                }
+            }
+        });
+
+        function atualizarMetricasTitulo() {
+            const texto = titleInput.value.trim();
+            titlePreview.textContent = texto || "Título do vídeo...";
+
+            const palavras = texto ? texto.split(/\s+/).filter(Boolean).length : 0;
+            const caracteres = texto.length;
+
+            wordCount.textContent = `${palavras} ${palavras === 1 ? "palavra" : "palavras"}`;
+            wordCount.className = "pill-metric " + (palavras >= 7 && palavras <= 8 ? "ok" : palavras >= 5 && palavras <= 10 ? "warn" : "err");
+
+            charCount.textContent = `${caracteres} caracteres`;
+            charCount.className = "pill-metric " + (caracteres >= 45 && caracteres <= 55 ? "ok" : caracteres <= 65 ? "warn" : "err");
+
+            // Verifica se o texto passou de 2 linhas no card mobile
+            requestAnimationFrame(() => {
+                const cortou = titlePreview.scrollHeight > titlePreview.clientHeight + 1;
+                if (cortou) {
+                    cutStatus.textContent = "Cortou com '...' no celular";
+                    cutStatus.className = "pill-metric err";
+                } else {
+                    cutStatus.textContent = "Cabe inteiro no celular";
+                    cutStatus.className = "pill-metric ok";
+                }
+            });
+        }
+
+        titleInput.addEventListener("input", atualizarMetricasTitulo);
+
+        durationInput.addEventListener("input", () => {
+            durationPreview.textContent = durationInput.value || "00:00";
+        });
+
+        metaInput.addEventListener("input", () => {
+            metaPreview.textContent = `Só um rabisco • ${metaInput.value}`;
+        });
+
+        btnDark.addEventListener("click", () => {
+            phoneFrame.classList.remove("yt-light");
+            phoneFrame.classList.add("yt-dark");
+            btnDark.classList.add("active");
+            btnLight.classList.remove("active");
+        });
+
+        btnLight.addEventListener("click", () => {
+            phoneFrame.classList.remove("yt-dark");
+            phoneFrame.classList.add("yt-light");
+            btnLight.classList.add("active");
+            btnDark.classList.remove("active");
+        });
+
+        atualizarMetricasTitulo();
+    </script>
+</body>
+
+</html>
