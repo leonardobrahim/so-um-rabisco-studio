@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from backend.pipeline import (
+    gerar_cenas_de_prompts_salvos,
     gerar_storyboard_automatico,
     inferir_tipo_projeto,
     ler_ou_criar_meta_projeto,
@@ -354,6 +355,15 @@ def gerar_storyboard_endpoint(nome: str, tipo: str | None = None) -> dict[str, A
     return resultado
 
 
+@app.post("/api/projetos/{nome}/gerar-cenas-prompts")
+def gerar_cenas_prompts_endpoint(nome: str, tipo: str | None = None) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    try:
+        return gerar_cenas_de_prompts_salvos(pasta, tipo_forcado=tipo)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/projetos/{nome}/pacote-chat")
 def obter_pacote_chat(nome: str, tipo: str | None = None) -> dict[str, Any]:
     pasta = _resolver_projeto(nome)
@@ -470,9 +480,10 @@ async def upload_imagens_em_lote(
     cenas_dir.mkdir(parents=True, exist_ok=True)
 
     extensoes_validas = {".png", ".jpg", ".jpeg", ".webp"}
-    arquivos_validos = [
-        f for f in files if f.filename and Path(f.filename).suffix.lower() in extensoes_validas
-    ]
+    arquivos_validos = sorted(
+        [f for f in files if f.filename and Path(f.filename).suffix.lower() in extensoes_validas],
+        key=lambda f: (f.filename or "").lower(),
+    )
     if not arquivos_validos:
         raise HTTPException(
             status_code=400,
@@ -579,18 +590,21 @@ def obter_imagem_cena(nome: str, arquivo: str) -> FileResponse:
 
 
 @app.post("/api/projetos/{nome}/preparar-render")
-def preparar_render(nome: str) -> dict[str, Any]:
+def preparar_render(nome: str, com_legenda: bool = True) -> dict[str, Any]:
     pasta = _resolver_projeto(nome)
-    if not (pasta / "cenas.json").exists():
+    cenas_path = pasta / "cenas.json"
+    if not cenas_path.exists():
         raise HTTPException(
             status_code=400,
             detail="O arquivo cenas.json ainda não existe neste projeto. Salve o Storyboard antes de preparar o render.",
         )
 
-    resultado_script = _executar_script("preparar_render.py", [str(pasta)], timeout_sec=120)
+    flag = "--com-legenda" if com_legenda else "--sem-legenda"
+    resultado_script = _executar_script("preparar_render.py", [str(pasta), flag], timeout_sec=120)
     return {
         "ok": True,
         "projeto": pasta.name,
+        "com_legenda": com_legenda,
         "template_dir": str(TEMPLATE_DIR),
         "log": resultado_script["stdout"],
     }

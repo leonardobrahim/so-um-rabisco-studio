@@ -70,7 +70,11 @@ export function TabImagens({ projeto, onAtualizado, onIrParaAba }: Props) {
       /\.(png|jpe?g|webp)$/i.test(f.name)
     );
     if (validos.length > 0) {
-      setFila((prev) => [...prev, ...validos]);
+      setFila((prev) =>
+        [...prev, ...validos].sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
+        )
+      );
     }
   }
 

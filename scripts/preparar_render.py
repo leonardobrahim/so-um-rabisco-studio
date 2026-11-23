@@ -81,12 +81,16 @@ def _garantir_legendas_cenas(cenas_data: dict, pasta_projeto: Path | None = None
             except Exception:
                 palavras_ts = []
 
-    for cena in cenas_data.get("cenas", []):
+    cenas_lista = cenas_data.get("cenas", [])
+    palavra_cursor = 0
+
+    for idx_cena, cena in enumerate(cenas_lista):
         cena.pop("x", None)
         cena.pop("y", None)
 
         inicio = float(cena.get("inicio", 0.0))
         fim = float(cena.get("fim", inicio + 1.5))
+        eh_ultima_cena = idx_cena == len(cenas_lista) - 1
 
         # Se já existem micro-legendas válidas (<= 3 palavras cada), apenas garante cor
         if cena.get("legendas") and all(len(str(l.get("texto", "")).split()) <= 3 for l in cena["legendas"]):
@@ -95,11 +99,16 @@ def _garantir_legendas_cenas(cenas_data: dict, pasta_projeto: Path | None = None
                     l["cor"] = _escolher_cor_bloco(str(l.get("texto", "")), idx)
             continue
 
-        # Tenta puxar palavras exatas do Whisper dentro do intervalo [inicio, fim]
-        palavras_cena = [
-            w for w in palavras_ts
-            if (w["inicio"] + w["fim"]) / 2.0 >= inicio - 0.08 and (w["inicio"] + w["fim"]) / 2.0 <= fim + 0.08
-        ]
+        # Consome cada palavra do Whisper apenas uma vez (intervalo semi-aberto [inicio, fim))
+        palavras_cena = []
+        while palavra_cursor < len(palavras_ts):
+            w = palavras_ts[palavra_cursor]
+            meio = (w["inicio"] + w["fim"]) / 2.0
+            if eh_ultima_cena or meio < fim:
+                palavras_cena.append(w)
+                palavra_cursor += 1
+            else:
+                break
 
         if palavras_cena:
             grupos_ts: list[list[dict]] = []
@@ -161,7 +170,7 @@ def _garantir_legendas_cenas(cenas_data: dict, pasta_projeto: Path | None = None
         cena["legendas"] = legendas
 
 
-def preparar(pasta_projeto: Path, template_dir: Path):
+def preparar(pasta_projeto: Path, template_dir: Path, com_legenda: bool | None = None):
     assets_atual = template_dir / "assets_atual"
     if assets_atual.exists():
         shutil.rmtree(assets_atual)
@@ -170,7 +179,13 @@ def preparar(pasta_projeto: Path, template_dir: Path):
     # Carrega cenas.json, garante micro-legendas sincronizadas e grava no template
     cenas_origem_json = pasta_projeto / "cenas.json"
     cenas_data = json.loads(cenas_origem_json.read_text(encoding="utf-8"))
-    _garantir_legendas_cenas(cenas_data, pasta_projeto)
+    if com_legenda is not None:
+        cenas_data["mostrar_legendas"] = com_legenda
+    elif "mostrar_legendas" not in cenas_data:
+        cenas_data["mostrar_legendas"] = True
+
+    if cenas_data.get("mostrar_legendas", True):
+        _garantir_legendas_cenas(cenas_data, pasta_projeto)
     (template_dir / "cenas.json").write_text(
         json.dumps(cenas_data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -202,5 +217,12 @@ if __name__ == "__main__":
     raiz = Path(__file__).resolve().parent.parent
     template = raiz / "template-hyperframes"
 
-    alvo = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else encontrar_projeto_pronto(raiz)
-    preparar(alvo, template)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    com_legenda_flag: bool | None = None
+    if "--sem-legenda" in sys.argv[1:]:
+        com_legenda_flag = False
+    elif "--com-legenda" in sys.argv[1:]:
+        com_legenda_flag = True
+
+    alvo = Path(args[0]).resolve() if args else encontrar_projeto_pronto(raiz)
+    preparar(alvo, template, com_legenda=com_legenda_flag)

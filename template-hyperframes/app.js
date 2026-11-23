@@ -16,10 +16,15 @@ function configurarDimensoes(formato) {
     }
 }
 
-function escolherTipoCamera(cena, index) {
-    // A cada 4 ou 5 cenas, aplica slide-transition rápida de mudança de bloco narrativo
+function escolherTipoCamera(cena, index, ehGancho) {
+    // Nos primeiros 10s (gancho), prioriza entradas de impacto e transições rápidas
+    if (ehGancho) {
+        const cicloGancho = ["impact-pop", "slide-transition", "impact-pop", "slide-left", "zoom-in"];
+        return cicloGancho[index % cicloGancho.length];
+    }
+
     if (index > 0 && index % 4 === 0) {
-        return "slide-transition";
+        return index % 8 === 0 ? "slide-left" : "slide-transition";
     }
 
     const efeito = (cena.efeito || "").toLowerCase();
@@ -34,13 +39,13 @@ function escolherTipoCamera(cena, index) {
 
 function aplicarAnimacaoCena(tl, el, cena, index) {
     const inicio = Number(cena.inicio) || 0;
-    const fim = Number(cena.fim) || inicio + 1.8;
+    const fim = Number(cena.fim) || inicio + 1.5;
     const duracao = Math.max(0.15, fim - inicio);
     const escalaBase = Number(cena.escala) || 1.0;
     const efeito = (cena.efeito || "pop-in").toLowerCase();
-    const modoCamera = escolherTipoCamera(cena, index);
+    const ehGancho = inicio < 10.0;
+    const modoCamera = escolherTipoCamera(cena, index, ehGancho);
 
-    // Ativa visibilidade exatamente no frame de entrada
     tl.set(
         el,
         {
@@ -48,70 +53,86 @@ function aplicarAnimacaoCena(tl, el, cena, index) {
             scale: escalaBase,
             x: 0,
             y: 0,
+            xPercent: 0,
             yPercent: 0,
             rotation: 0,
         },
         inicio
     );
 
+    const driftX = index % 2 === 0 ? 16 : -16;
+    const tilt = index % 2 === 0 ? 1.1 : -1.1;
+
     if (modoCamera === "slide-transition") {
-        // Transição rápida de bloco narrativo (0.22s de baixo para cima) + zoom-in contínuo
+        const durTrans = Math.min(0.18, duracao * 0.35);
         tl.fromTo(
             el,
-            { yPercent: 100, scale: escalaBase },
-            { yPercent: 0, scale: escalaBase * 1.03, duration: Math.min(0.22, duracao * 0.4), ease: "power3.out" },
+            { yPercent: 100, scale: escalaBase * 1.02 },
+            { yPercent: 0, scale: escalaBase * 1.04, duration: durTrans, ease: "power3.out" },
             inicio
         );
-        if (duracao > 0.25) {
+        if (duracao > durTrans) {
             tl.to(
                 el,
-                { scale: escalaBase * 1.09, duration: duracao - 0.22, ease: "none" },
-                inicio + 0.22
+                { scale: escalaBase * 1.11, x: driftX, rotation: tilt, duration: duracao - durTrans, ease: "none" },
+                inicio + durTrans
+            );
+        }
+    } else if (modoCamera === "slide-left") {
+        const durTrans = Math.min(0.18, duracao * 0.35);
+        tl.fromTo(
+            el,
+            { xPercent: 100, scale: escalaBase * 1.02 },
+            { xPercent: 0, scale: escalaBase * 1.04, duration: durTrans, ease: "power3.out" },
+            inicio
+        );
+        if (duracao > durTrans) {
+            tl.to(
+                el,
+                { scale: escalaBase * 1.11, y: -12, rotation: -tilt, duration: duracao - durTrans, ease: "none" },
+                inicio + durTrans
             );
         }
     } else if (modoCamera === "impact-pop") {
-        // Entrada rápida de impacto (0.18s) de 1.14 para 1.02 com back.out(1.7)
-        const durPop = Math.min(0.18, duracao * 0.4);
+        const durPop = Math.min(0.16, duracao * 0.35);
         tl.fromTo(
             el,
-            { scale: escalaBase * 1.14 },
-            { scale: escalaBase * 1.02, duration: durPop, ease: "back.out(1.7)" },
+            { scale: escalaBase * (ehGancho ? 1.18 : 1.14), rotation: -tilt },
+            { scale: escalaBase * 1.02, rotation: 0, duration: durPop, ease: "back.out(1.7)" },
             inicio
         );
         if (duracao > durPop) {
             tl.to(
                 el,
-                { scale: escalaBase * 1.07, duration: duracao - durPop, ease: "none" },
+                { scale: escalaBase * 1.10, x: driftX * 0.7, duration: duracao - durPop, ease: "none" },
                 inicio + durPop
             );
         }
     } else if (modoCamera === "zoom-out") {
-        // Recuo suave de 1.09 para 1.0
         tl.fromTo(
             el,
-            { scale: escalaBase * 1.09 },
-            { scale: escalaBase, duration: duracao, ease: "power1.out" },
+            { scale: escalaBase * 1.12, x: -driftX, rotation: tilt * 0.8 },
+            { scale: escalaBase * 1.0, x: driftX * 0.5, rotation: 0, duration: duracao, ease: "power1.out" },
             inicio
         );
     } else {
-        // zoom-in contínuo suave de 1.0 até 1.09
         tl.fromTo(
             el,
-            { scale: escalaBase },
-            { scale: escalaBase * 1.09, duration: duracao, ease: "none" },
+            { scale: escalaBase, x: 0, rotation: 0 },
+            { scale: escalaBase * 1.11, x: driftX, rotation: tilt, duration: duracao, ease: "none" },
             inicio
         );
     }
 
     if (efeito === "shake") {
         const passos = [
-            { x: -12, rotation: -1.2 },
-            { x: 12, rotation: 1.2 },
-            { x: -8, rotation: -0.8 },
-            { x: 8, rotation: 0.8 },
+            { x: -14, rotation: -1.5 },
+            { x: 14, rotation: 1.5 },
+            { x: -10, rotation: -1.0 },
+            { x: 10, rotation: 1.0 },
             { x: 0, rotation: 0 },
         ];
-        const tempoPasso = Math.min(0.05, duracao / (passos.length * 2));
+        const tempoPasso = Math.min(0.045, duracao / (passos.length * 2));
         passos.forEach((p, idx) => {
             tl.to(
                 el,
@@ -121,8 +142,51 @@ function aplicarAnimacaoCena(tl, el, cena, index) {
         });
     }
 
-    // Saída limpa para a próxima cena assumir
     tl.set(el, { autoAlpha: 0 }, fim);
+}
+
+function aplicarDoodleBurst(tl, fxLayer, cena, index) {
+    const inicio = Number(cena.inicio) || 0;
+    const fim = Number(cena.fim) || inicio + 1.5;
+    const ehGancho = inicio < 10.0;
+    const efeito = (cena.efeito || "").toLowerCase();
+
+    // Adiciona risquinhos de ênfase estilo rabisco 2D no gancho e em momentos de impacto
+    if (!ehGancho && efeito !== "shake" && index % 3 !== 0) return;
+
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("class", "doodle-burst");
+    svg.setAttribute("viewBox", "0 0 100 100");
+    svg.setAttribute("preserveAspectRatio", "none");
+
+    const linhas = [
+        { x1: "10", y1: "16", x2: "16", y2: "20", cor: "#111111" },
+        { x1: "8", y1: "22", x2: "14", y2: "24", cor: "#FFC928" },
+        { x1: "90", y1: "16", x2: "84", y2: "20", cor: "#111111" },
+        { x1: "92", y1: "22", x2: "86", y2: "24", cor: "#FFC928" },
+    ];
+    linhas.forEach((l) => {
+        const line = document.createElementNS(svgNS, "line");
+        line.setAttribute("x1", l.x1);
+        line.setAttribute("y1", l.y1);
+        line.setAttribute("x2", l.x2);
+        line.setAttribute("y2", l.y2);
+        line.setAttribute("stroke", l.cor);
+        line.setAttribute("stroke-width", "0.7");
+        line.setAttribute("stroke-linecap", "round");
+        svg.appendChild(line);
+    });
+
+    fxLayer.appendChild(svg);
+
+    tl.fromTo(
+        svg,
+        { autoAlpha: 0, scale: 0.85 },
+        { autoAlpha: 0.9, scale: 1.05, duration: 0.14, ease: "back.out(2)" },
+        inicio
+    );
+    tl.to(svg, { autoAlpha: 0, duration: 0.25 }, Math.min(fim, inicio + 0.45));
 }
 
 function dividirFalaCurtaFallback(fala, inicio, fim) {
@@ -148,7 +212,7 @@ function dividirFalaCurtaFallback(fala, inicio, fim) {
 
 function aplicarLegendas(tl, layer, cena) {
     const inicioCena = Number(cena.inicio) || 0;
-    const fimCena = Number(cena.fim) || inicioCena + 1.8;
+    const fimCena = Number(cena.fim) || inicioCena + 1.5;
 
     let blocos = Array.isArray(cena.legendas) && cena.legendas.length > 0 ? cena.legendas : null;
     if (!blocos) {
@@ -170,20 +234,19 @@ function aplicarLegendas(tl, layer, cena) {
         el.textContent = texto;
         layer.appendChild(el);
 
-        // Pop rápido de retenção: scale 0.75 -> 1.05 -> 1.0 em 0.15s
+        // Sem xPercent/translateX para manter centralização matemática perfeita via width: 100% + text-align: center
         tl.fromTo(
             el,
-            { autoAlpha: 0, scale: 0.75, xPercent: -50 },
-            { autoAlpha: 1, scale: 1.05, xPercent: -50, duration: 0.09, ease: "power2.out" },
+            { autoAlpha: 0, scale: 0.75 },
+            { autoAlpha: 1, scale: 1.05, duration: 0.09, ease: "power2.out" },
             bIni
         );
         tl.to(
             el,
-            { scale: 1.0, xPercent: -50, duration: 0.06, ease: "power1.out" },
+            { scale: 1.0, duration: 0.06, ease: "power1.out" },
             bIni + 0.09
         );
 
-        // Desaparece exatamente quando o próximo bloco entra
         tl.set(el, { autoAlpha: 0 }, bFim);
     });
 }
@@ -203,7 +266,13 @@ async function inicializarComposicao() {
     }
 
     const stage = document.getElementById("stage");
+    const fxLayer = document.getElementById("fx-layer");
     const captionLayer = document.getElementById("caption-layer");
+    const progressBar = document.getElementById("progress-bar");
+    const mostrarLegendas = dados.mostrar_legendas !== false;
+    if (captionLayer && !mostrarLegendas) {
+        captionLayer.style.display = "none";
+    }
     const imagensParaCarregar = [];
 
     (dados.cenas || []).forEach((cena, index) => {
@@ -222,11 +291,23 @@ async function inicializarComposicao() {
         }
 
         aplicarAnimacaoCena(mainTimeline, wrapper, cena, index);
-        aplicarLegendas(mainTimeline, captionLayer, cena);
+        aplicarDoodleBurst(mainTimeline, fxLayer, cena, index);
+        if (mostrarLegendas) {
+            aplicarLegendas(mainTimeline, captionLayer, cena);
+        }
     });
 
     if (dados.duracao_total) {
-        mainTimeline.to({}, { duration: 0.01 }, Number(dados.duracao_total));
+        const durTotal = Number(dados.duracao_total);
+        if (progressBar) {
+            mainTimeline.fromTo(
+                progressBar,
+                { scaleX: 0 },
+                { scaleX: 1, duration: durTotal, ease: "none" },
+                0
+            );
+        }
+        mainTimeline.to({}, { duration: 0.01 }, durTotal);
     }
 
     await Promise.all(imagensParaCarregar);

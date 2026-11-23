@@ -104,6 +104,21 @@ export const api = {
       { method: "POST" }
     ),
 
+  gerarCenasDePrompts: (nome: string, tipo?: ProjetoTipo) =>
+    request<{
+      ok: boolean;
+      fonte: string;
+      formato: "16:9" | "9:16";
+      duracao_total: number;
+      qtd_cenas: number;
+      cenas: CenasConfig;
+    }>(
+      `/api/projetos/${encodeURIComponent(nome)}/gerar-cenas-prompts${
+        tipo ? `?tipo=${tipo}` : ""
+      }`,
+      { method: "POST" }
+    ),
+
   exportarPrompts: (nome: string) =>
     request<{ ok: boolean; arquivo_destino: string; qtd_prompts: number }>(
       `/api/projetos/${encodeURIComponent(nome)}/exportar-prompts`,
@@ -213,13 +228,19 @@ export const api = {
       cacheBust ? `?t=${cacheBust}` : ""
     }`,
 
-  prepararRender: (nome: string) =>
+  prepararRender: (nome: string, comLegenda = true) =>
     request<{
       ok: boolean;
       projeto: string;
+      com_legenda: boolean;
       template_dir: string;
       log: string;
-    }>(`/api/projetos/${encodeURIComponent(nome)}/preparar-render`, {
-      method: "POST",
-    }),
+    }>(
+      `/api/projetos/${encodeURIComponent(
+        nome
+      )}/preparar-render?com_legenda=${comLegenda}`,
+      {
+        method: "POST",
+      }
+    ),
 };

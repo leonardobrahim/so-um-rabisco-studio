@@ -53,6 +53,7 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
   const [copiadoPacote, setCopiadoPacote] = useState(false);
   const [promptsColados, setPromptsColados] = useState("");
   const [salvandoColados, setSalvandoColados] = useState(false);
+  const [gerandoDePrompts, setGerandoDePrompts] = useState(false);
   const [mensagem, setMensagem] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -265,6 +266,29 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
       );
     } finally {
       setSalvandoColados(false);
+    }
+  }
+
+  async function handleGerarCenasDePromptsSalvos() {
+    setGerandoDePrompts(true);
+    setErro(null);
+    setMensagem(null);
+    try {
+      const res = await api.gerarCenasDePrompts(projeto.nome, projeto.tipo);
+      atualizarConfig(res.cenas);
+      setModoJson(false);
+      setMensagem(
+        `cenas.json montado a partir de ${res.fonte}: ${res.qtd_cenas} cenas (${res.formato}) com legendas sincronizadas!`
+      );
+      onAtualizado();
+    } catch (err) {
+      setErro(
+        err instanceof Error
+          ? err.message
+          : "Erro ao gerar cenas a partir dos prompts salvos"
+      );
+    } finally {
+      setGerandoDePrompts(false);
     }
   }
 
@@ -506,23 +530,38 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
 
           {/* Campo simples para colar prompts gerados no chat e salvar no prompts_imagens.txt */}
           <div className="bg-[#0e1117] border border-slate-800 rounded-lg p-3 space-y-2">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-[11px] font-semibold text-slate-300">
                 Colar prompts gerados e salvar em <code>prompts_imagens.txt</code>
               </span>
-              <button
-                type="button"
-                disabled={salvandoColados || !promptsColados.trim()}
-                onClick={() => void salvarPromptsColados()}
-                className="px-3 py-1 rounded bg-[#ffc928] hover:bg-[#ffd452] disabled:opacity-45 text-black font-semibold text-xs cursor-pointer flex items-center gap-1.5"
-              >
-                {salvandoColados ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <Save className="w-3 h-3" />
-                )}
-                Salvar em prompts_imagens.txt
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={salvandoColados || !promptsColados.trim()}
+                  onClick={() => void salvarPromptsColados()}
+                  className="px-3 py-1 rounded bg-[#ffc928] hover:bg-[#ffd452] disabled:opacity-45 text-black font-semibold text-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  {salvandoColados ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Save className="w-3 h-3" />
+                  )}
+                  Salvar em prompts_imagens.txt
+                </button>
+                <button
+                  type="button"
+                  disabled={gerandoDePrompts}
+                  onClick={() => void handleGerarCenasDePromptsSalvos()}
+                  className="px-3 py-1 rounded bg-emerald-500/20 border border-emerald-500/40 hover:bg-emerald-500/30 disabled:opacity-45 text-emerald-200 font-semibold text-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  {gerandoDePrompts ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Wand2 className="w-3 h-3" />
+                  )}
+                  Gerar Cenas dos Prompts Salvos
+                </button>
+              </div>
             </div>
             <textarea
               value={promptsColados}
@@ -604,6 +643,19 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                 Gerar Cenas & Prompts Automaticamente ({projeto.formato})
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => void handleGerarCenasDePromptsSalvos()}
+              disabled={gerandoDePrompts}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 hover:bg-emerald-500/30 disabled:opacity-45 text-emerald-200 text-xs font-bold cursor-pointer"
+            >
+              {gerandoDePrompts ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Wand2 className="w-4 h-4" />
+              )}
+              Gerar Cenas dos Prompts Salvos
+            </button>
             <button
               type="button"
               onClick={adicionarCena}

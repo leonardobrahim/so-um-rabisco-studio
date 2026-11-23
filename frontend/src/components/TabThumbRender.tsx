@@ -52,6 +52,7 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
   const [copiadoPromptThumb, setCopiadoPromptThumb] = useState(false);
 
   const [preparando, setPreparando] = useState(false);
+  const [comLegenda, setComLegenda] = useState(true);
   const [renderLog, setRenderLog] = useState<string | null>(null);
   const [renderErro, setRenderErro] = useState<string | null>(null);
 
@@ -130,8 +131,11 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
     setRenderErro(null);
     setRenderLog(null);
     try {
-      const res = await api.prepararRender(projeto.nome);
-      setRenderLog(res.log || "Template preparado com sucesso!");
+      const res = await api.prepararRender(projeto.nome, comLegenda);
+      setRenderLog(
+        (res.log || "Template preparado com sucesso!") +
+          ` (${comLegenda ? "Com legendas" : "Sem legendas"})`
+      );
       onAtualizado();
     } catch (err) {
       setRenderErro(
@@ -197,19 +201,45 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
                 <code>scripts/preparar_render.py</code>.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => void handlePrepararRender()}
-              disabled={preparando || !projeto.tem_cenas_json}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#ffc928] hover:bg-[#ffd452] disabled:opacity-45 text-black font-bold text-xs transition cursor-pointer shadow-sm"
-            >
-              {preparando ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Rocket className="w-4 h-4" />
-              )}
-              Preparar Render Agora
-            </button>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex items-center bg-[#0b0d12] p-0.5 rounded-xl border border-slate-800 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setComLegenda(true)}
+                  className={`px-3 py-2 rounded-lg transition cursor-pointer ${
+                    comLegenda
+                      ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  Com Legenda
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setComLegenda(false)}
+                  className={`px-3 py-2 rounded-lg transition cursor-pointer ${
+                    !comLegenda
+                      ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  Sem Legenda
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handlePrepararRender()}
+                disabled={preparando || !projeto.tem_cenas_json}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#ffc928] hover:bg-[#ffd452] disabled:opacity-45 text-black font-bold text-xs transition cursor-pointer shadow-sm"
+              >
+                {preparando ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Rocket className="w-4 h-4" />
+                )}
+                Preparar Render Agora
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-3 gap-2.5 text-xs">

@@ -514,10 +514,11 @@ def _subdividir_texto_em_intervalo(
 
 
 def _fatiar_por_timestamps(timestamps: dict[str, Any], tipo: str) -> tuple[list[dict[str, Any]], float]:
-    min_dur = 1.5
-    max_dur = 3.0
-    # Ritmo dinâmico (~25 a 35 cenas/min -> alvo ~1.75s em Shorts e ~2.05s em Longos)
-    alvo_dur = 1.75 if tipo == "short" else 2.05
+    # Nos primeiros 10s (gancho), cortes ainda mais rápidos (1.05s a 1.6s) para segurar retenção;
+    # depois segue ritmo dinâmico (1.3s a 2.4s em Shorts, 1.5s a 2.6s em Longos) com [MM:SS] únicos.
+    min_dur_padrao = 1.3 if tipo == "short" else 1.5
+    max_dur_padrao = 2.4 if tipo == "short" else 2.6
+    alvo_dur_padrao = 1.55 if tipo == "short" else 1.85
 
     segmentos = timestamps.get("segmentos") or []
 
@@ -542,7 +543,7 @@ def _fatiar_por_timestamps(timestamps: dict[str, Any], tipo: str) -> tuple[list[
             s_fim = float(seg.get("fim", s_ini + 1.8))
             s_txt = str(seg.get("texto", "")).strip()
             if s_txt:
-                for sub in _subdividir_texto_em_intervalo(s_txt, s_ini, max(s_ini + min_dur, s_fim), min_dur, max_dur):
+                for sub in _subdividir_texto_em_intervalo(s_txt, s_ini, max(s_ini + min_dur_padrao, s_fim), min_dur_padrao, max_dur_padrao):
                     todas_palavras.append(
                         {"palavra": sub["texto"], "inicio": sub["inicio"], "fim": sub["fim"]}
                     )
@@ -555,6 +556,11 @@ def _fatiar_por_timestamps(timestamps: dict[str, Any], tipo: str) -> tuple[list[
         g_inicio = float(grupo[0]["inicio"])
         g_fim = float(w["fim"])
         dur = g_fim - g_inicio
+        eh_gancho = g_inicio < 10.0
+        min_dur = 1.05 if eh_gancho else min_dur_padrao
+        alvo_dur = 1.25 if eh_gancho else alvo_dur_padrao
+        max_dur = 1.65 if eh_gancho else max_dur_padrao
+
         pontuacao = w["palavra"].endswith((",", ".", "?", "!", ";", ":"))
         eh_ultima = idx == len(todas_palavras) - 1
 
@@ -563,7 +569,7 @@ def _fatiar_por_timestamps(timestamps: dict[str, Any], tipo: str) -> tuple[list[
         proximo_muda_segundo = int(proximo_inicio) > int(g_inicio)
 
         atingiu_alvo_pontuacao = pontuacao and dur >= min_dur
-        atingiu_alvo_dinamico = dur >= alvo_dur and (pontuacao or idx % 2 == 0 or dur >= alvo_dur + 0.35)
+        atingiu_alvo_dinamico = dur >= alvo_dur and (pontuacao or idx % 2 == 0 or dur >= alvo_dur + 0.3)
         proxima_ultrapassa_max = (
             not eh_ultima
             and (float(todas_palavras[idx + 1]["fim"]) - g_inicio) > max_dur
@@ -584,14 +590,14 @@ def _fatiar_por_timestamps(timestamps: dict[str, Any], tipo: str) -> tuple[list[
                 )
             grupo = []
 
-    # Se a última cena sobrou menor que 1.5s, funde com a anterior (ou divide igualmente >= 1.5s)
-    if len(blocos) >= 2 and (blocos[-1]["fim"] - blocos[-1]["inicio"]) < min_dur:
+    # Se a última cena sobrou menor que min_dur_padrao, funde com a anterior (ou divide igualmente)
+    if len(blocos) >= 2 and (blocos[-1]["fim"] - blocos[-1]["inicio"]) < min_dur_padrao:
         ultima = blocos.pop()
         anterior = blocos[-1]
         dur_combinada = ultima["fim"] - anterior["inicio"]
         texto_combinado = f"{anterior['texto']} {ultima['texto']}".strip()
         palavras_comb_ts = [*(anterior.get("palavras") or []), *(ultima.get("palavras") or [])]
-        if dur_combinada <= max_dur:
+        if dur_combinada <= max_dur_padrao:
             anterior["fim"] = ultima["fim"]
             anterior["texto"] = texto_combinado
             anterior["palavras"] = palavras_comb_ts
@@ -621,13 +627,11 @@ def _fatiar_por_timestamps(timestamps: dict[str, Any], tipo: str) -> tuple[list[
         for i in range(len(blocos) - 1):
             atual = blocos[i]
             proximo = blocos[i + 1]
-            # Ajusta fronteira para o início da próxima fala quando houver pausa curta,
-            # respeitando o teto de 3.0s
             if proximo["inicio"] > atual["fim"]:
-                if (proximo["inicio"] - atual["inicio"]) <= max_dur:
+                if (proximo["inicio"] - atual["inicio"]) <= max_dur_padrao:
                     atual["fim"] = proximo["inicio"]
                 else:
-                    atual["fim"] = round(atual["inicio"] + max_dur, 2)
+                    atual["fim"] = round(atual["inicio"] + max_dur_padrao, 2)
                     proximo["inicio"] = atual["fim"]
             elif proximo["inicio"] < atual["fim"]:
                 proximo["inicio"] = atual["fim"]
@@ -640,10 +644,10 @@ def _fatiar_por_timestamps(timestamps: dict[str, Any], tipo: str) -> tuple[list[
                     proximo["inicio"] = novo_ini
 
         if duracao_total > blocos[-1]["fim"]:
-            if (duracao_total - blocos[-1]["inicio"]) <= max_dur:
+            if (duracao_total - blocos[-1]["inicio"]) <= max_dur_padrao:
                 blocos[-1]["fim"] = round(duracao_total, 2)
             else:
-                blocos[-1]["fim"] = round(blocos[-1]["inicio"] + max_dur, 2)
+                blocos[-1]["fim"] = round(blocos[-1]["inicio"] + max_dur_padrao, 2)
         elif duracao_total == 0.0:
             duracao_total = blocos[-1]["fim"]
 
@@ -813,4 +817,170 @@ def gerar_storyboard_automatico(
         "qtd_cenas": len(cenas_json_lista),
         "cenas": cenas_payload,
         "storyboard": storyboard_md,
+    }
+
+
+def _parsear_mm_ss(marca: str) -> float:
+    m = re.match(r"^\[(\d{2}):(\d{2})\]", marca.strip())
+    if not m:
+        return 0.0
+    return int(m.group(1)) * 60.0 + int(m.group(2))
+
+
+def gerar_cenas_de_prompts_salvos(
+    pasta_projeto: Path,
+    tipo_forcado: str | None = None,
+) -> dict[str, Any]:
+    """
+    Gera cenas.json lendo diretamente os prompts salvos (prompts_imagens.txt do projeto,
+    04-storyboard-e-prompts.md ou prompts_imagens.txt da raiz), SEM modificar nem sobrescrever
+    nenhum arquivo de prompts.
+    """
+    meta = ler_ou_criar_meta_projeto(pasta_projeto)
+    tipo = tipo_forcado if tipo_forcado in ("longo", "short") else meta["tipo"]
+    formato = "9:16" if tipo == "short" else "16:9"
+    raiz = pasta_projeto.parent.parent
+
+    # Procura a fonte de prompts na ordem: projeto/prompts_imagens.txt -> 04-storyboard-e-prompts.md -> raiz/prompts_imagens.txt
+    candidatos = [
+        pasta_projeto / "prompts_imagens.txt",
+        pasta_projeto / "04-storyboard-e-prompts.md",
+        raiz / "prompts_imagens.txt",
+    ]
+    linhas_brutas: list[str] = []
+    fonte_usada = ""
+    for cand in candidatos:
+        if cand.exists():
+            linhas = [l.strip() for l in cand.read_text(encoding="utf-8").splitlines() if l.strip()]
+            com_ts = [l for l in linhas if re.match(r"^\[\d{2}:\d{2}\]", l)]
+            if com_ts:
+                linhas_brutas = com_ts
+                fonte_usada = cand.name
+                break
+            elif linhas and cand.name == "prompts_imagens.txt" and not linhas_brutas:
+                linhas_brutas = linhas
+                fonte_usada = cand.name
+
+    if not linhas_brutas:
+        raise ValueError(
+            "Nenhum prompt encontrado em prompts_imagens.txt ou 04-storyboard-e-prompts.md deste projeto."
+        )
+
+    # Carrega transcrição palavra por palavra e duração total do áudio (se disponível)
+    palavras_ts: list[dict[str, Any]] = []
+    duracao_audio = 0.0
+    ts_path = pasta_projeto / "03-timestamps.json"
+    if ts_path.exists():
+        ts_data = json.loads(ts_path.read_text(encoding="utf-8"))
+        duracao_audio = float(ts_data.get("duracao_total") or 0.0)
+        for seg in ts_data.get("segmentos") or []:
+            for w in seg.get("palavras") or []:
+                txt = str(w.get("palavra", "")).strip()
+                if txt:
+                    palavras_ts.append(
+                        {
+                            "palavra": txt,
+                            "inicio": float(w.get("inicio", 0.0)),
+                            "fim": float(w.get("fim", 0.0)),
+                        }
+                    )
+
+    # Fallback de texto de narração se não houver 03-timestamps.json
+    nar_path = pasta_projeto / "02-narracao.txt"
+    narracao_palavras = (
+        nar_path.read_text(encoding="utf-8").strip().split()
+        if nar_path.exists()
+        else []
+    )
+
+    tem_timestamps_no_txt = all(re.match(r"^\[\d{2}:\d{2}\]", l) for l in linhas_brutas)
+    inicios: list[float] = []
+    if tem_timestamps_no_txt:
+        inicios = [_parsear_mm_ss(l) for l in linhas_brutas]
+        if inicios:
+            inicios[0] = 0.0
+        # Garante estrita monotonicidade se houver algum empate
+        for i in range(1, len(inicios)):
+            if inicios[i] <= inicios[i - 1]:
+                inicios[i] = round(inicios[i - 1] + 1.5, 2)
+    else:
+        dur_base = duracao_audio if duracao_audio > 0 else len(linhas_brutas) * 2.0
+        passo = dur_base / len(linhas_brutas)
+        inicios = [round(i * passo, 2) for i in range(len(linhas_brutas))]
+
+    duracao_total = round(
+        max(duracao_audio, (inicios[-1] + 2.0) if inicios else 0.0),
+        2,
+    )
+
+    efeitos_alternados = ["zoom-in", "zoom-out", "impact-pop"]
+    cenas_json_lista: list[dict[str, Any]] = []
+    palavra_cursor = 0
+
+    for idx, linha in enumerate(linhas_brutas, start=1):
+        inicio = round(inicios[idx - 1], 2)
+        fim = round(inicios[idx], 2) if idx < len(inicios) else duracao_total
+        if fim <= inicio:
+            fim = round(inicio + 1.5, 2)
+
+        prompt_limpo = limpar_prefixo_timestamp(linha)
+        efeito = efeitos_alternados[(idx - 1) % len(efeitos_alternados)]
+
+        palavras_cena: list[dict[str, Any]] = []
+        eh_ultima_cena = idx == len(linhas_brutas)
+        while palavra_cursor < len(palavras_ts):
+            w = palavras_ts[palavra_cursor]
+            meio = (w["inicio"] + w["fim"]) / 2.0
+            if eh_ultima_cena or meio < fim:
+                palavras_cena.append(w)
+                palavra_cursor += 1
+            else:
+                break
+
+        if palavras_cena:
+            fala = " ".join(w["palavra"] for w in palavras_cena).strip()
+            legendas = _gerar_blocos_legenda(fala, inicio, fim, palavras_cena)
+        elif narracao_palavras:
+            p_ini = (len(narracao_palavras) * (idx - 1)) // len(linhas_brutas)
+            p_fim = (len(narracao_palavras) * idx) // len(linhas_brutas)
+            fala = " ".join(narracao_palavras[p_ini:p_fim]).strip()
+            legendas = _gerar_blocos_legenda(fala, inicio, fim) if fala else []
+        else:
+            fala = ""
+            legendas = []
+
+        cenas_json_lista.append(
+            {
+                "arquivo": f"assets_atual/cenas/cena_{idx:02d}.png",
+                "inicio": inicio,
+                "fim": fim,
+                "efeito": efeito,
+                "texto": fala,
+                "narracao": fala,
+                "legendas": legendas,
+                "prompt": prompt_limpo,
+                "escala": 1.0,
+            }
+        )
+
+    cenas_payload = {
+        "projeto": pasta_projeto.name,
+        "formato": formato,
+        "fps": 30,
+        "duracao_total": duracao_total,
+        "audio": "assets_atual/audio.wav",
+        "cenas": cenas_json_lista,
+    }
+
+    (pasta_projeto / "cenas.json").write_text(
+        json.dumps(cenas_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    return {
+        "ok": True,
+        "fonte": fonte_usada,
+        "formato": formato,
+        "duracao_total": duracao_total,
+        "qtd_cenas": len(cenas_json_lista),
+        "cenas": cenas_payload,
     }

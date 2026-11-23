@@ -90,8 +90,8 @@ def processar_lote(pasta_origem: Path, pasta_destino: Path):
         print(f"Nenhuma imagem encontrada em: {pasta_origem}")
         return
 
-    # Ordena pela data de modificacao/download para manter a sequencia das cenas
-    arquivos.sort(key=lambda f: f.stat().st_mtime)
+    # Ordena alfabeticamente pelo nome do arquivo para manter a sequencia das cenas
+    arquivos.sort(key=lambda f: f.name.lower())
     pasta_destino.mkdir(parents=True, exist_ok=True)
 
     print(f"Processando {len(arquivos)} imagens de '{pasta_origem}'...")
