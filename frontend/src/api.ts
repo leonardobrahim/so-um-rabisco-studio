@@ -243,4 +243,41 @@ export const api = {
         method: "POST",
       }
     ),
+
+  renderizarVideo: (
+    nome: string,
+    comLegenda = true,
+    qualidade: "draft" | "looks" | "delivery" = "looks"
+  ) =>
+    request<{
+      ok: boolean;
+      status: string;
+      projeto: string;
+      arquivo_saida: string;
+    }>(
+      `/api/projetos/${encodeURIComponent(
+        nome
+      )}/renderizar-video?com_legenda=${comLegenda}&qualidade=${qualidade}`,
+      {
+        method: "POST",
+      }
+    ),
+
+  statusRenderVideo: (nome: string) =>
+    request<{
+      status: "idle" | "running" | "done" | "error";
+      projeto: string;
+      outro_projeto_renderizando: string | null;
+      existe_video: boolean;
+      tamanho_bytes: number | null;
+      caminho_video: string;
+      log_linhas: string[];
+      ultima_linha: string | null;
+      erro: string | null;
+    }>(`/api/projetos/${encodeURIComponent(nome)}/renderizar-status`),
+
+  videoFinalUrl: (nome: string, cacheBust?: number) =>
+    `${API_BASE}/api/projetos/${encodeURIComponent(nome)}/video${
+      cacheBust ? `?t=${cacheBust}` : ""
+    }`,
 };

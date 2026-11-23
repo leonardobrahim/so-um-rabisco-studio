@@ -1,266 +1,404 @@
 {
-  "projeto": "2026-11-teste",
-  "formato": "9:16",
+  "projeto": "teste final - video longo",
+  "formato": "16:9",
   "fps": 30,
-  "duracao_total": 14.6,
+  "duracao_total": 28.0,
   "audio": "assets_atual/audio.wav",
   "cenas": [
     {
       "arquivo": "assets_atual/cenas/cena_01.png",
       "inicio": 0.0,
-      "fim": 1.0,
+      "fim": 2.0,
       "efeito": "zoom-in",
-      "texto": "Você abre o celular",
-      "narracao": "Você abre o celular",
+      "texto": "Você já reparou que o seu cérebro só",
+      "narracao": "Você já reparou que o seu cérebro só",
       "legendas": [
         {
-          "texto": "Você abre",
+          "texto": "Você já",
           "inicio": 0.0,
-          "fim": 0.68,
+          "fim": 0.46,
           "cor": "branco"
         },
         {
-          "texto": "o celular",
-          "inicio": 0.68,
-          "fim": 1.0,
+          "texto": "reparou que",
+          "inicio": 0.46,
+          "fim": 0.98,
           "cor": "canal"
+        },
+        {
+          "texto": "o seu cérebro",
+          "inicio": 0.98,
+          "fim": 1.7,
+          "cor": "branco"
+        },
+        {
+          "texto": "só",
+          "inicio": 1.7,
+          "fim": 2.0,
+          "cor": "branco"
         }
       ],
-      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 9:16 vertical composition, pure solid white background (#FFFFFF). Medium shot of the protagonist (compact cartoon character whose large rounded pale-white head with subtle light-blue shading on the left side takes up one-third of his height, messy irregular black hair, simple oval black eyes, wearing a bright yellow hoodie #FFC928, dark navy blue pants, and low white sneakers with black details) lying comfortably in bed at night, unlocking a glowing smartphone with a casual, relaxed smile.",
+      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 16:9 horizontal composition, soft muted lavender-gray background (#E6E4EE) with faint doodle clock and gear outlines. Medium close-up of a smug, mischievous pink cartoon brain with skinny doodle arms crossed and a sly evil grin floating in the center, surrounded by tiny spark doodles. No overly bright or neon background colors.",
       "escala": 1.0
     },
     {
       "arquivo": "assets_atual/cenas/cena_02.png",
-      "inicio": 1.0,
-      "fim": 2.0,
-      "efeito": "zoom-out",
-      "texto": "às 11 da noite",
-      "narracao": "às 11 da noite",
-      "legendas": [
-        {
-          "texto": "às 11",
-          "inicio": 1.0,
-          "fim": 1.6,
-          "cor": "canal"
-        },
-        {
-          "texto": "da noite",
-          "inicio": 1.6,
-          "fim": 2.0,
-          "cor": "canal"
-        }
-      ],
-      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 9:16 vertical composition, pure solid white background (#FFFFFF). Close-up of a minimalist cartoon bedside digital clock glowing softly with \"23:00\" next to a small crescent moon and star doodles.",
-      "escala": 1.0
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_03.png",
       "inicio": 2.0,
-      "fim": 4.0,
-      "efeito": "impact-pop",
-      "texto": "só para ver uma mensagem rápida.",
-      "narracao": "só para ver uma mensagem rápida.",
+      "fim": 5.0,
+      "efeito": "zoom-out",
+      "texto": "lembra daquela vergonha que você passou há sete anos?",
+      "narracao": "lembra daquela vergonha que você passou há sete anos?",
       "legendas": [
         {
-          "texto": "só para",
+          "texto": "lembra daquela",
           "inicio": 2.0,
-          "fim": 2.58,
+          "fim": 2.68,
           "cor": "branco"
         },
         {
-          "texto": "ver uma mensagem",
-          "inicio": 2.58,
-          "fim": 3.4,
+          "texto": "vergonha que",
+          "inicio": 2.68,
+          "fim": 3.26,
           "cor": "canal"
         },
         {
-          "texto": "rápida.",
-          "inicio": 3.4,
-          "fim": 4.0,
-          "cor": "branco"
-        }
-      ],
-      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 9:16 vertical composition, pure solid white background (#FFFFFF). Close-up of the protagonist's hands holding a smartphone screen showing a single small floating chat bubble doodle with one check mark and a tiny bell icon, keeping the composition clean and simple.",
-      "escala": 1.0
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_04.png",
-      "inicio": 4.0,
-      "fim": 5.0,
-      "efeito": "zoom-in",
-      "texto": "Quando olha para o",
-      "narracao": "Quando olha para o",
-      "legendas": [
-        {
-          "texto": "Quando olha",
-          "inicio": 4.0,
-          "fim": 4.68,
+          "texto": "você passou há",
+          "inicio": 3.26,
+          "fim": 3.88,
           "cor": "branco"
         },
         {
-          "texto": "para o",
-          "inicio": 4.68,
+          "texto": "sete anos?",
+          "inicio": 3.88,
           "fim": 5.0,
           "cor": "canal"
         }
       ],
-      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 9:16 vertical composition, pure solid white background (#FFFFFF). Close-up of the protagonist (large rounded pale-white head with subtle light-blue left shading, messy irregular black hair, bright yellow hoodie #FFC928) squinting with a shocked, panicked expression, wide oval eyes, and sweat drops as he looks up from his phone toward a wall clock.",
+      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 16:9 horizontal composition, cozy room background with soft warm beige walls (#EFECE6) and a muted sage-green potted plant. Medium shot of the protagonist (compact cartoon character whose large rounded pale-white head with subtle light-blue shading on the left side takes up one-third of his height, messy irregular black hair, wide panicked oval black eyes, bright red blush across his cheeks, wearing a bright yellow hoodie #FFC928, dark navy blue pants, and low white sneakers with black details) covering his face with both hands in embarrassment next to a torn wall calendar page with Brazilian Portuguese text: \"7 ANOS ATRÁS\". No overly bright or neon background colors.",
       "escala": 1.0
     },
     {
-      "arquivo": "assets_atual/cenas/cena_05.png",
+      "arquivo": "assets_atual/cenas/cena_03.png",
       "inicio": 5.0,
-      "fim": 7.0,
-      "efeito": "zoom-out",
-      "texto": "relógio de novo, já são duas da manhã",
-      "narracao": "relógio de novo, já são duas da manhã",
+      "fim": 8.0,
+      "efeito": "impact-pop",
+      "texto": "Exatamente na hora em que você encosta a cabeça no travesseiro?",
+      "narracao": "Exatamente na hora em que você encosta a cabeça no travesseiro?",
       "legendas": [
         {
-          "texto": "relógio de",
+          "texto": "Exatamente na",
           "inicio": 5.0,
-          "fim": 5.36,
+          "fim": 6.08,
           "cor": "branco"
         },
         {
-          "texto": "novo, já",
-          "inicio": 5.36,
-          "fim": 5.96,
+          "texto": "hora em que",
+          "inicio": 6.08,
+          "fim": 6.36,
           "cor": "canal"
         },
         {
-          "texto": "são duas",
-          "inicio": 5.96,
-          "fim": 6.52,
+          "texto": "você encosta a",
+          "inicio": 6.36,
+          "fim": 7.02,
           "cor": "branco"
         },
         {
-          "texto": "da manhã",
-          "inicio": 6.52,
-          "fim": 7.0,
-          "cor": "branco"
-        }
-      ],
-      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 9:16 vertical composition, pure solid white background (#FFFFFF). Dynamic close-up of an exaggerated cartoon wall clock with spinning hands stopping sharply at 2:00 AM, surrounded by tiny crescent moon and star doodles.",
-      "escala": 1.0
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_06.png",
-      "inicio": 7.0,
-      "fim": 8.0,
-      "efeito": "impact-pop",
-      "texto": "e você está",
-      "narracao": "e você está",
-      "legendas": [
-        {
-          "texto": "e você",
-          "inicio": 7.0,
-          "fim": 7.58,
-          "cor": "branco"
-        },
-        {
-          "texto": "está",
-          "inicio": 7.58,
+          "texto": "cabeça no travesseiro?",
+          "inicio": 7.02,
           "fim": 8.0,
           "cor": "canal"
         }
       ],
-      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 9:16 vertical composition, pure solid white background (#FFFFFF). Medium close-up of the protagonist (compact cartoon character with large rounded pale-white head with light-blue left shading, messy black hair, dark circles under his wide hypnotized oval eyes, wearing a bright yellow hoodie #FFC928 and dark navy blue pants) slumped in bed staring blankly at his smartphone screen.",
+      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 16:9 horizontal composition, dim cozy night bedroom background with soft muted slate-blue walls (#3A4659), a window with a pale crescent moon, and a soft muted gray blanket. Wide horizontal shot of the protagonist (large rounded pale-white head with light-blue left shading, messy irregular black hair, bright yellow hoodie #FFC928) lying in bed, his eyes suddenly snapping wide open in total shock the exact instant his head touches a fluffy cream pillow, with exclamation marks popping around him. No overly bright or neon background colors.",
       "escala": 1.0
     },
     {
-      "arquivo": "assets_atual/cenas/cena_07.png",
+      "arquivo": "assets_atual/cenas/cena_04.png",
       "inicio": 8.0,
       "fim": 10.0,
       "efeito": "zoom-in",
-      "texto": "assistindo um vídeo de alguém limpando um tapete",
-      "narracao": "assistindo um vídeo de alguém limpando um tapete",
+      "texto": "Durante o dia inteiro, ele",
+      "narracao": "Durante o dia inteiro, ele",
       "legendas": [
         {
-          "texto": "assistindo um",
+          "texto": "Durante o",
           "inicio": 8.0,
-          "fim": 8.4,
+          "fim": 8.9,
           "cor": "branco"
         },
         {
-          "texto": "vídeo de",
-          "inicio": 8.4,
-          "fim": 8.92,
+          "texto": "dia inteiro,",
+          "inicio": 8.9,
+          "fim": 9.81,
           "cor": "canal"
         },
         {
-          "texto": "alguém limpando",
-          "inicio": 8.92,
-          "fim": 9.64,
-          "cor": "branco"
-        },
-        {
-          "texto": "um tapete",
-          "inicio": 9.64,
+          "texto": "ele",
+          "inicio": 9.81,
           "fim": 10.0,
           "cor": "branco"
         }
       ],
-      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 9:16 vertical composition, pure solid white background (#FFFFFF). Close-up illustration of a cartoon hand holding a high-pressure water washer spraying a muddy, heavily stained shaggy rug, with simple soap foam doodles.",
+      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 16:9 horizontal composition, airy daytime background with a soft pastel sky-blue wall (#DCE8EE) and a subtle warm cream window frame. Medium shot of the protagonist (compact cartoon character with large rounded pale-white head, messy black hair, confused oval eyes, wearing a bright yellow hoodie #FFC928 and dark navy blue pants) scratching his head while a tiny cartoon brain wearing a sleep mask snores inside a thought bubble above him. No overly bright or neon background colors.",
+      "escala": 1.0
+    },
+    {
+      "arquivo": "assets_atual/cenas/cena_05.png",
+      "inicio": 10.0,
+      "fim": 13.0,
+      "efeito": "zoom-out",
+      "texto": "está ocupado esquecendo onde você deixou a chave de casa",
+      "narracao": "está ocupado esquecendo onde você deixou a chave de casa",
+      "legendas": [
+        {
+          "texto": "está ocupado",
+          "inicio": 10.0,
+          "fim": 10.62,
+          "cor": "branco"
+        },
+        {
+          "texto": "esquecendo onde",
+          "inicio": 10.62,
+          "fim": 11.68,
+          "cor": "canal"
+        },
+        {
+          "texto": "você deixou",
+          "inicio": 11.68,
+          "fim": 12.2,
+          "cor": "branco"
+        },
+        {
+          "texto": "a chave de",
+          "inicio": 12.2,
+          "fim": 12.6,
+          "cor": "branco"
+        },
+        {
+          "texto": "casa",
+          "inicio": 12.6,
+          "fim": 13.0,
+          "cor": "canal"
+        }
+      ],
+      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 16:9 horizontal composition, home entryway background with soft warm sand walls (#EDE6D8), a light muted-wood console table, and a simple coat rack. Dynamic medium shot of the protagonist (large rounded pale-white head with light-blue left shading, messy irregular black hair, panicked wide eyes, bright yellow hoodie #FFC928, dark navy blue pants) frantically turning his pockets inside out looking for his keys while a giant cartoon house key sits unnoticed right on top of his messy hair. No overly bright or neon background colors.",
+      "escala": 1.0
+    },
+    {
+      "arquivo": "assets_atual/cenas/cena_06.png",
+      "inicio": 13.0,
+      "fim": 15.0,
+      "efeito": "impact-pop",
+      "texto": "e o nome da pessoa que acabou de se",
+      "narracao": "e o nome da pessoa que acabou de se",
+      "legendas": [
+        {
+          "texto": "e o",
+          "inicio": 13.0,
+          "fim": 13.46,
+          "cor": "branco"
+        },
+        {
+          "texto": "nome da pessoa",
+          "inicio": 13.46,
+          "fim": 14.16,
+          "cor": "canal"
+        },
+        {
+          "texto": "que acabou",
+          "inicio": 14.16,
+          "fim": 14.66,
+          "cor": "branco"
+        },
+        {
+          "texto": "de se",
+          "inicio": 14.66,
+          "fim": 15.0,
+          "cor": "branco"
+        }
+      ],
+      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 16:9 horizontal composition, soft pastel mint-gray hallway background (#E2ECE9) with minimalist door and plant outlines. Medium two-shot of the protagonist (compact cartoon character with large rounded pale-white head, messy black hair, awkward nervous smile and sweat drop, bright yellow hoodie #FFC928, dark navy blue pants) shaking hands with a friendly cartoon acquaintance wearing a muted slate-blue t-shirt who has a blank white name tag filled with question marks floating above his head. No overly bright or neon background colors.",
+      "escala": 1.0
+    },
+    {
+      "arquivo": "assets_atual/cenas/cena_07.png",
+      "inicio": 15.0,
+      "fim": 18.0,
+      "efeito": "zoom-in",
+      "texto": "apresentar. Mas bastou apagar a luz que ele abre um",
+      "narracao": "apresentar. Mas bastou apagar a luz que ele abre um",
+      "legendas": [
+        {
+          "texto": "apresentar.",
+          "inicio": 15.0,
+          "fim": 15.61,
+          "cor": "branco"
+        },
+        {
+          "texto": "Mas bastou",
+          "inicio": 15.61,
+          "fim": 16.5,
+          "cor": "canal"
+        },
+        {
+          "texto": "apagar a luz",
+          "inicio": 16.5,
+          "fim": 17.14,
+          "cor": "branco"
+        },
+        {
+          "texto": "que ele",
+          "inicio": 17.14,
+          "fim": 17.68,
+          "cor": "branco"
+        },
+        {
+          "texto": "abre um",
+          "inicio": 17.68,
+          "fim": 18.0,
+          "cor": "canal"
+        }
+      ],
+      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 16:9 horizontal composition, dark cozy room background in muted midnight blue-gray (#2C3545). Medium shot of a cartoon hand clicking a wall light switch off on the left while on the right the mischievous cartoon brain opens a soft cream manila folder labeled with Brazilian Portuguese text: \"VERGONHAS HD\" projecting a gentle pale-yellow cinema beam. No overly bright or neon background colors.",
       "escala": 1.0
     },
     {
       "arquivo": "assets_atual/cenas/cena_08.png",
-      "inicio": 10.0,
-      "fim": 12.0,
+      "inicio": 18.0,
+      "fim": 21.0,
       "efeito": "zoom-out",
-      "texto": "encardido. O algoritmo",
-      "narracao": "encardido. O algoritmo",
+      "texto": "arquivo em alta definição daquele dia em que você deu",
+      "narracao": "arquivo em alta definição daquele dia em que você deu",
       "legendas": [
         {
-          "texto": "encardido.",
-          "inicio": 10.0,
-          "fim": 11.03,
+          "texto": "arquivo em",
+          "inicio": 18.0,
+          "fim": 18.7,
           "cor": "branco"
         },
         {
-          "texto": "O algoritmo",
-          "inicio": 11.03,
-          "fim": 12.0,
+          "texto": "alta definição",
+          "inicio": 18.7,
+          "fim": 19.7,
+          "cor": "canal"
+        },
+        {
+          "texto": "daquele dia",
+          "inicio": 19.7,
+          "fim": 20.34,
+          "cor": "branco"
+        },
+        {
+          "texto": "em que você",
+          "inicio": 20.34,
+          "fim": 20.78,
+          "cor": "branco"
+        },
+        {
+          "texto": "deu",
+          "inicio": 20.78,
+          "fim": 21.0,
           "cor": "canal"
         }
       ],
-      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 9:16 vertical composition, pure solid white background (#FFFFFF). Medium shot of an evil, smug cartoon smartphone character with mischievous eyebrows and a sly grin holding a giant magnet pulling a glowing blue battery icon away from the protagonist (compact cartoon character with large rounded pale-white head, messy black hair, bright yellow hoodie #FFC928, dark navy blue pants).",
+      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 16:9 horizontal composition, outdoor daytime sidewalk background with a soft desaturated pastel blue sky (#DCE9F2), muted cream buildings, and soft olive-green tree foliage. Medium shot of the protagonist (compact cartoon character with large rounded pale-white head with light-blue left shading, messy irregular black hair, huge enthusiastic smile, wearing a bright yellow hoodie #FFC928, dark navy blue pants, and low white sneakers with black details) waving both hands high in the air. No overly bright or neon background colors.",
       "escala": 1.0
     },
     {
       "arquivo": "assets_atual/cenas/cena_09.png",
-      "inicio": 12.0,
-      "fim": 14.6,
+      "inicio": 21.0,
+      "fim": 24.0,
       "efeito": "impact-pop",
-      "texto": "não quer o seu bem, ele só quer o seu sono.",
-      "narracao": "não quer o seu bem, ele só quer o seu sono.",
+      "texto": "tchau para alguém que nem estava olhando para você.",
+      "narracao": "tchau para alguém que nem estava olhando para você.",
       "legendas": [
         {
-          "texto": "não quer o",
-          "inicio": 12.0,
-          "fim": 12.5,
-          "cor": "alerta"
+          "texto": "tchau para",
+          "inicio": 21.0,
+          "fim": 21.76,
+          "cor": "branco"
         },
         {
-          "texto": "seu bem, ele",
-          "inicio": 12.5,
-          "fim": 13.16,
+          "texto": "alguém que",
+          "inicio": 21.76,
+          "fim": 22.26,
           "cor": "canal"
         },
         {
-          "texto": "só quer o",
-          "inicio": 13.16,
-          "fim": 13.62,
+          "texto": "nem estava",
+          "inicio": 22.26,
+          "fim": 22.92,
           "cor": "branco"
         },
         {
-          "texto": "seu sono.",
-          "inicio": 13.62,
-          "fim": 14.6,
+          "texto": "olhando para",
+          "inicio": 22.92,
+          "fim": 23.4,
+          "cor": "branco"
+        },
+        {
+          "texto": "você.",
+          "inicio": 23.4,
+          "fim": 24.0,
+          "cor": "canal"
+        }
+      ],
+      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 16:9 horizontal composition, same outdoor sidewalk background with soft desaturated pastel blue sky (#DCE9F2), light warm-gray pavement, and muted cream buildings. Wide horizontal comedy shot: on the right, a bystander in muted gray clothes walks away completely ignoring the protagonist and waves to someone far off-screen; on the left, the protagonist (large rounded pale-white head, messy black hair, bright yellow hoodie #FFC928, dark navy blue pants) freezes in mortified horror with a giant sweat drop and his hand stuck mid-wave. No overly bright or neon background colors.",
+      "escala": 1.0
+    },
+    {
+      "arquivo": "assets_atual/cenas/cena_10.png",
+      "inicio": 24.0,
+      "fim": 26.0,
+      "efeito": "zoom-in",
+      "texto": "A mente humana não quer paz, ela só",
+      "narracao": "A mente humana não quer paz, ela só",
+      "legendas": [
+        {
+          "texto": "A mente humana",
+          "inicio": 24.0,
+          "fim": 24.86,
+          "cor": "branco"
+        },
+        {
+          "texto": "não quer paz,",
+          "inicio": 24.86,
+          "fim": 25.54,
+          "cor": "alerta"
+        },
+        {
+          "texto": "ela só",
+          "inicio": 25.54,
+          "fim": 26.0,
           "cor": "branco"
         }
       ],
-      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 9:16 vertical composition, pure solid white background (#FFFFFF). Medium close-up of the protagonist (large rounded pale-white head with light-blue left shading, messy black hair, exhausted droopy oval eyes with heavy dark circles, wearing a bright yellow hoodie #FFC928 and dark navy blue pants) slumped forward next to a tiny glowing red 1% battery icon and a floating pillow doodle.",
+      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 16:9 horizontal composition, quiet night bedroom background with soft muted dusty-blue walls (#344054) and a cozy muted gray duvet. Medium close-up of the protagonist (large rounded pale-white head with light-blue left shading, messy black hair, exhausted droopy oval eyes with dark circles, wearing a bright yellow hoodie #FFC928) pressing a pale cream pillow tightly over his ears in bed while a floating wooden sign with Brazilian Portuguese text: \"PAZ\" cracks in half. No overly bright or neon background colors.",
+      "escala": 1.0
+    },
+    {
+      "arquivo": "assets_atual/cenas/cena_11.png",
+      "inicio": 26.0,
+      "fim": 28.0,
+      "efeito": "zoom-out",
+      "texto": "quer audiência na madrugada.",
+      "narracao": "quer audiência na madrugada.",
+      "legendas": [
+        {
+          "texto": "quer audiência",
+          "inicio": 26.0,
+          "fim": 26.94,
+          "cor": "branco"
+        },
+        {
+          "texto": "na madrugada.",
+          "inicio": 26.94,
+          "fim": 28.0,
+          "cor": "canal"
+        }
+      ],
+      "prompt": "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines and flat colors, 16:9 horizontal composition, dimly lit cozy control room background with muted charcoal-blue walls (#2B3340). Wide horizontal shot: on the left, the mischievous cartoon brain sits comfortably in a muted brown director's chair eating popcorn next to a simple rising chart doodle; on the right, a cartoon TV monitor displays the exhausted protagonist wide awake in bed. No overly bright or neon background colors.",
       "escala": 1.0
     }
   ],

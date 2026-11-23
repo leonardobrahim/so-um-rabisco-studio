@@ -1,8 +1,10 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -291,13 +293,20 @@ def ler_storyboard(nome: str) -> dict[str, Any]:
 
 
 def _sincronizar_prompts_imagens(conteudo_storyboard: str) -> int:
-    prompts = [
-        re.sub(r"^\[\d{2}:\d{2}\]\s*", "", linha.strip())
-        for linha in conteudo_storyboard.splitlines()
-        if re.match(r"^\[\d{2}:\d{2}\]", linha.strip())
-    ]
+    prompts: list[str] = []
+    tempos: list[str] = []
+    for linha in conteudo_storyboard.splitlines():
+        texto_linha = linha.strip()
+        m = re.match(r"^(\[\d{2}:\d{2}\])\s*(.*)$", texto_linha)
+        if m:
+            tempos.append(m.group(1))
+            prompts.append(m.group(2))
+
     destino = ROOT_DIR / "prompts_imagens.txt"
     destino.write_text("\n\n".join(prompts) + ("\n" if prompts else ""), encoding="utf-8")
+
+    destino_tempos = ROOT_DIR / "tempos_imagens.txt"
+    destino_tempos.write_text("\n\n".join(tempos) + ("\n" if tempos else ""), encoding="utf-8")
     return len(prompts)
 
 
@@ -511,9 +520,14 @@ async def upload_imagens_em_lote(
         os.utime(destino, (ts, ts))
         salvos.append(destino.name)
 
+    meta = ler_ou_criar_meta_projeto(pasta)
+    args_limpeza = [str(raw_dir), str(cenas_dir)]
+    if meta.get("tipo") == "longo":
+        args_limpeza.append("--manter-fundo")
+
     resultado_script = _executar_script(
         "limpar_imagens.py",
-        [str(raw_dir), str(cenas_dir)],
+        args_limpeza,
         timeout_sec=300,
     )
 
@@ -544,9 +558,14 @@ def reprocessar_imagens(nome: str) -> dict[str, Any]:
         if antigo.is_file():
             antigo.unlink()
 
+    meta = ler_ou_criar_meta_projeto(pasta)
+    args_limpeza = [str(raw_dir), str(cenas_dir)]
+    if meta.get("tipo") == "longo":
+        args_limpeza.append("--manter-fundo")
+
     resultado_script = _executar_script(
         "limpar_imagens.py",
-        [str(raw_dir), str(cenas_dir)],
+        args_limpeza,
         timeout_sec=300,
     )
     cenas_geradas = sorted(
@@ -608,3 +627,180 @@ def preparar_render(nome: str, com_legenda: bool = True) -> dict[str, Any]:
         "template_dir": str(TEMPLATE_DIR),
         "log": resultado_script["stdout"],
     }
+
+
+_RENDER_LOCK = threading.Lock()
+_RENDER_ESTADO: dict[str, Any] = {
+    "status": "idle",  # idle | running | done | error
+    "projeto": None,
+    "arquivo_saida": None,
+    "qualidade": "looks",
+    "com_legenda": True,
+    "log_linhas": [],
+    "erro": None,
+    "atualizado_em": 0.0,
+}
+
+
+def _rodar_hyperframes_render(
+    nome_projeto: str,
+    arquivo_saida: Path,
+    qualidade: str,
+) -> None:
+    npx_cmd = shutil.which("npx.cmd") or shutil.which("npx") or "npx"
+    cmd = [
+        npx_cmd,
+        "hyperframes",
+        "render",
+        ".",
+        "-o",
+        str(arquivo_saida),
+        "-q",
+        qualidade,
+    ]
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(TEMPLATE_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+        )
+        assert proc.stdout is not None
+        for linha in proc.stdout:
+            limpa = linha.strip()
+            if not limpa:
+                continue
+            with _RENDER_LOCK:
+                linhas = list(_RENDER_ESTADO.get("log_linhas") or [])
+                linhas.append(limpa)
+                _RENDER_ESTADO["log_linhas"] = linhas[-30:]
+                _RENDER_ESTADO["atualizado_em"] = time.time()
+
+        codigo = proc.wait()
+        with _RENDER_LOCK:
+            if codigo == 0 and arquivo_saida.is_file():
+                _RENDER_ESTADO["status"] = "done"
+                _RENDER_ESTADO["erro"] = None
+            else:
+                ultimas = " | ".join((_RENDER_ESTADO.get("log_linhas") or [])[-3:])
+                _RENDER_ESTADO["status"] = "error"
+                _RENDER_ESTADO["erro"] = (
+                    f"HyperFrames encerrou com código {codigo}. {ultimas}".strip()
+                )
+            _RENDER_ESTADO["atualizado_em"] = time.time()
+    except Exception as exc:
+        with _RENDER_LOCK:
+            _RENDER_ESTADO["status"] = "error"
+            _RENDER_ESTADO["erro"] = str(exc)
+            _RENDER_ESTADO["atualizado_em"] = time.time()
+
+
+@app.post("/api/projetos/{nome}/renderizar-video")
+def renderizar_video(
+    nome: str,
+    com_legenda: bool = True,
+    qualidade: Literal["draft", "looks", "delivery"] = "looks",
+) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    cenas_path = pasta / "cenas.json"
+    if not cenas_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="O arquivo cenas.json ainda não existe neste projeto. Salve o Storyboard antes de renderizar.",
+        )
+
+    with _RENDER_LOCK:
+        if _RENDER_ESTADO["status"] == "running":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Já existe uma renderização em andamento para '{_RENDER_ESTADO['projeto']}'. Aguarde concluir.",
+            )
+
+    flag = "--com-legenda" if com_legenda else "--sem-legenda"
+    _executar_script("preparar_render.py", [str(pasta), flag], timeout_sec=120)
+
+    midia_dir = pasta / "midia"
+    midia_dir.mkdir(parents=True, exist_ok=True)
+    arquivo_saida = midia_dir / "video_final.mp4"
+
+    with _RENDER_LOCK:
+        _RENDER_ESTADO.update(
+            {
+                "status": "running",
+                "projeto": pasta.name,
+                "arquivo_saida": str(arquivo_saida),
+                "qualidade": qualidade,
+                "com_legenda": com_legenda,
+                "log_linhas": [f"Iniciando HyperFrames ({qualidade})..."],
+                "erro": None,
+                "atualizado_em": time.time(),
+            }
+        )
+
+    t = threading.Thread(
+        target=_rodar_hyperframes_render,
+        args=(pasta.name, arquivo_saida, qualidade),
+        daemon=True,
+    )
+    t.start()
+
+    return {
+        "ok": True,
+        "status": "running",
+        "projeto": pasta.name,
+        "arquivo_saida": str(arquivo_saida),
+    }
+
+
+@app.get("/api/projetos/{nome}/renderizar-status")
+def status_render_video(nome: str) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    video_path = pasta / "midia" / "video_final.mp4"
+    existe_video = video_path.is_file()
+    tamanho_bytes = video_path.stat().st_size if existe_video else None
+
+    with _RENDER_LOCK:
+        mesmo_projeto = _RENDER_ESTADO.get("projeto") == pasta.name
+        status = _RENDER_ESTADO["status"] if mesmo_projeto else "idle"
+        outro_rodando = (
+            _RENDER_ESTADO.get("projeto")
+            if not mesmo_projeto and _RENDER_ESTADO["status"] == "running"
+            else None
+        )
+        log_linhas = list(_RENDER_ESTADO.get("log_linhas") or []) if mesmo_projeto else []
+        erro = _RENDER_ESTADO.get("erro") if mesmo_projeto else None
+
+    return {
+        "status": status,
+        "projeto": pasta.name,
+        "outro_projeto_renderizando": outro_rodando,
+        "existe_video": existe_video,
+        "tamanho_bytes": tamanho_bytes,
+        "caminho_video": str(video_path),
+        "log_linhas": log_linhas,
+        "ultima_linha": log_linhas[-1] if log_linhas else None,
+        "erro": erro,
+    }
+
+
+@app.get("/api/projetos/{nome}/video")
+def obter_video_final(nome: str) -> FileResponse:
+    pasta = _resolver_projeto(nome)
+    video_path = pasta / "midia" / "video_final.mp4"
+    if not video_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="O vídeo final ainda não foi renderizado para este projeto.",
+        )
+    return FileResponse(
+        video_path,
+        media_type="video/mp4",
+        filename=f"{pasta.name}.mp4",
+    )

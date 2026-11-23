@@ -180,7 +180,9 @@ export function TabImagens({ projeto, onAtualizado, onIrParaAba }: Props) {
               ) : (
                 <Sparkles className="w-3.5 h-3.5" />
               )}
-              Reprocessar raw/ ({rawArquivos.length})
+              {isShort
+                ? `Reprocessar raw/ (${rawArquivos.length})`
+                : `Reprocessar raw/ (Manter Fundo - ${rawArquivos.length})`}
             </button>
           )}
           {promptsTexto && (
@@ -281,7 +283,9 @@ export function TabImagens({ projeto, onAtualizado, onIrParaAba }: Props) {
                   ) : (
                     <Sparkles className="w-4 h-4" />
                   )}
-                  Enviar e Limpar Fundo (limpar_imagens.py)
+                  {isShort
+                    ? "Enviar e Limpar Fundo (limpar_imagens.py)"
+                    : "Enviar e Padronizar Cenas (Manter Fundo)"}
                 </button>
               </div>
             </div>

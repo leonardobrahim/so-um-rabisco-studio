@@ -8,7 +8,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-STYLE_SUFFIX_TEMPLATE = (
+STYLE_SUFFIX_SHORT_TEMPLATE = (
     "Featuring a minimalist 2D cartoon character with a large rounded pale-white head "
     "(about 1/3 of total body height) with a slight light-blue shading area on the left side of the head, "
     "messy spiky black hair, simple oval black eyes, expressive minimalist face with eyebrows and mouth, "
@@ -18,6 +18,24 @@ STYLE_SUFFIX_TEMPLATE = (
     "slightly irregular lines, pure solid white background (#FFFFFF), no photorealism, "
     "no 3D, no heavy gradients, no realistic shadows, no excessive detail, {aspect} aspect ratio."
 )
+
+STYLE_SUFFIX_LONGO_TEMPLATE = (
+    "Featuring a minimalist 2D cartoon character with a large rounded pale-white head "
+    "(about 1/3 of total body height) with a slight light-blue shading area on the left side of the head, "
+    "messy spiky black hair, simple oval black eyes, expressive minimalist face with eyebrows and mouth, "
+    "compact small body wearing a vibrant yellow hoodie (#FFC928), dark navy blue pants, "
+    "and low white sneakers with black details. 2D minimalist cartoon illustration, "
+    "hand-drawn doodle and marker aesthetic, thick clean black outlines, flat colors, "
+    "slightly irregular lines, full illustrated background with soft muted pastel or desaturated colors, "
+    "subtle scenery and objects matching the scene, strictly avoid overly saturated or harsh bright primary "
+    "background colors (no loud neon blue, bright red, or harsh yellow walls/skies), no photorealism, "
+    "no 3D, no heavy gradients, no realistic shadows, no excessive detail, {aspect} aspect ratio."
+)
+
+
+def _obter_sufixo_estilo(tipo: str, formato: str) -> str:
+    template = STYLE_SUFFIX_SHORT_TEMPLATE if tipo == "short" else STYLE_SUFFIX_LONGO_TEMPLATE
+    return template.format(aspect=formato)
 
 # Regras semânticas PT-BR -> ação visual em inglês + efeito preferido
 REGRAS_VISUAIS: list[tuple[tuple[str, ...], str, str]] = [
@@ -351,6 +369,12 @@ def _gerar_acoes_via_gemini(
         for idx, b in enumerate(blocos, start=1)
     )
 
+    instrucao_fundo = (
+        "- Fundo branco sólido (#FFFFFF), sem cenário complexo."
+        if formato == "9:16"
+        else "- Inclua cenário/ambiente/objetos/paisagem de fundo em 2D minimalista coerentes com a fala, usando cores suaves/pastel/dessaturadas (nunca use cores muito fortes ou saturadas no fundo)."
+    )
+
     prompt_sistema = (
         "Você é o diretor de storyboard do canal 'Só um Rabisco'.\n"
         "Gere uma ação/cena visual ÚNICA e específica em INGLÊS para cada corte abaixo, "
@@ -358,7 +382,8 @@ def _gerar_acoes_via_gemini(
         "Regras obrigatórias:\n"
         "- NÃO repita a mesma pose ou enquadramento em cenas seguidas.\n"
         "- NÃO inclua a descrição física fixa do protagonista nem o sufixo de estilo (isso será concatenado depois).\n"
-        "- Descreva apenas a ação, expressão facial, objeto/cenário minimalista e interação da cena.\n"
+        "- Descreva a ação, expressão facial, objeto/cenário e interação da cena.\n"
+        f"{instrucao_fundo}\n"
         "- Se houver texto escrito dentro da ilustração (ex: placa, papel, tela), coloque esse texto em PORTUGUÊS DO BRASIL entre aspas simples.\n"
         f"- Formato do vídeo: {formato}.\n"
         "- Escolha o efeito entre: pop-in, zoom-in, zoom-out, slide-up, shake, cut.\n"
@@ -448,11 +473,17 @@ def montar_pacote_chat(
         pasta_projeto, tipo
     )
 
-    sufixo = STYLE_SUFFIX_TEMPLATE.format(aspect=formato)
+    sufixo = _obter_sufixo_estilo(tipo, formato)
     linhas_cortes = [
         f"- {_formatar_mm_ss(float(b['inicio']))} ({float(b['inicio']):.2f}s -> {float(b['fim']):.2f}s): \"{b['texto']}\""
         for b in blocos
     ]
+
+    regra_fallback_fundo = (
+        "fundo #FFFFFF."
+        if tipo == "short"
+        else "fundo ilustrado completo (cores, objetos ou paisagens) em tons suaves/dessaturados, sem cores fortes."
+    )
 
     pacote = "\n".join(
         [
@@ -460,7 +491,7 @@ def montar_pacote_chat(
             f"Formato: {formato} ({'Short / Reels' if tipo == 'short' else 'Vídeo Longo'}) | Duração: {duracao_total:.2f}s | Cortes: {len(blocos)} | Origem: {origem}",
             "",
             "## 1. REGRAS DE ESTILO E RITMO",
-            regras or "Cortes dinâmicos de 1,5s a 3,0s; prompts em inglês; textos na imagem em PT-BR; fundo #FFFFFF.",
+            regras or f"Cortes dinâmicos de 1,5s a 3,0s; prompts em inglês; textos na imagem em PT-BR; {regra_fallback_fundo}",
             "",
             f"Sufixo obrigatório no final de TODA linha:\n{sufixo}",
             "",
@@ -739,8 +770,9 @@ def gerar_storyboard_automatico(
         "",
     ]
     prompts_txt_lista: list[str] = []
+    tempos_txt_lista: list[str] = []
 
-    sufixo = STYLE_SUFFIX_TEMPLATE.format(aspect=formato)
+    sufixo = _obter_sufixo_estilo(tipo, formato)
     acao_anterior = ""
 
     for idx, bloco in enumerate(blocos, start=1):
@@ -781,6 +813,7 @@ def gerar_storyboard_automatico(
         linhas_md.append("")
 
         prompts_txt_lista.append(limpar_prefixo_timestamp(prompt_completo))
+        tempos_txt_lista.append(marca)
 
     cenas_payload = {
         "projeto": pasta_projeto.name,
@@ -806,6 +839,9 @@ def gerar_storyboard_automatico(
         raiz = pasta_projeto.parent.parent
         (raiz / "prompts_imagens.txt").write_text(
             "\n\n".join(prompts_txt_lista) + "\n", encoding="utf-8"
+        )
+        (raiz / "tempos_imagens.txt").write_text(
+            "\n\n".join(tempos_txt_lista) + "\n", encoding="utf-8"
         )
 
     return {

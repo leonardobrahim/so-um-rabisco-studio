@@ -15,6 +15,75 @@ def formatar_mm_ss(segundos: float) -> str:
     return f"{minutos:02d}:{segs:02d}"
 
 
+def _mesclar_dois_segmentos(primeiro: dict, segundo: dict) -> dict:
+    inicio = round(float(primeiro["inicio"]), 2)
+    fim = round(max(float(primeiro["fim"]), float(segundo["fim"])), 2)
+    texto = f"{str(primeiro.get('texto', '')).strip()} {str(segundo.get('texto', '')).strip()}".strip()
+    palavras = list(primeiro.get("palavras") or []) + list(segundo.get("palavras") or [])
+    return {
+        "marca": f"[{formatar_mm_ss(inicio)}]",
+        "inicio": inicio,
+        "fim": fim,
+        "texto": texto,
+        "palavras": palavras,
+    }
+
+
+def fundir_segmentos_curtos_e_duplicados(
+    segmentos: list[dict], min_duracao: float = 1.1
+) -> list[dict]:
+    """
+    Funde segmentos adjacentes que tenham a mesma marca [MM:SS] ou duracao
+    menor que `min_duracao` segundos, preservando inicio, fim, texto e palavras.
+    """
+    segs = [dict(s) for s in segmentos]
+    for s in segs:
+        s["inicio"] = round(float(s["inicio"]), 2)
+        s["fim"] = round(float(s["fim"]), 2)
+        s["marca"] = f"[{formatar_mm_ss(s['inicio'])}]"
+
+    # 1. Remove marcas [MM:SS] duplicadas consecutivas
+    alterou = True
+    while alterou and len(segs) > 1:
+        alterou = False
+        novos: list[dict] = []
+        for seg in segs:
+            if novos and novos[-1]["marca"] == seg["marca"]:
+                novos[-1] = _mesclar_dois_segmentos(novos[-1], seg)
+                alterou = True
+            else:
+                novos.append(seg)
+        segs = novos
+
+    # 2. Funde segmentos menores que min_duracao ao vizinho mais proximo no tempo
+    alterou = True
+    while alterou and len(segs) > 1:
+        alterou = False
+        for i, seg in enumerate(segs):
+            dur = seg["fim"] - seg["inicio"]
+            if dur < min_duracao:
+                if i == 0:
+                    segs[0 : 2] = [_mesclar_dois_segmentos(segs[0], segs[1])]
+                elif i == len(segs) - 1:
+                    segs[i - 1 : i + 1] = [_mesclar_dois_segmentos(segs[i - 1], segs[i])]
+                else:
+                    gap_ant = seg["inicio"] - segs[i - 1]["fim"]
+                    gap_prox = segs[i + 1]["inicio"] - seg["fim"]
+                    # Se a frase anterior terminou com pontuacao forte e o proximo esta mais perto, junta no proximo;
+                    # caso contrario junta no vizinho com menor pausa.
+                    ant_termina_pont = str(segs[i - 1].get("texto", "")).strip().endswith((".", "?", "!"))
+                    if ant_termina_pont and not str(seg.get("texto", "")).strip().endswith((".", "?", "!")) and gap_prox <= gap_ant + 0.3:
+                        segs[i : i + 2] = [_mesclar_dois_segmentos(segs[i], segs[i + 1])]
+                    elif gap_prox < gap_ant:
+                        segs[i : i + 2] = [_mesclar_dois_segmentos(segs[i], segs[i + 1])]
+                    else:
+                        segs[i - 1 : i + 1] = [_mesclar_dois_segmentos(segs[i - 1], segs[i])]
+                alterou = True
+                break
+
+    return segs
+
+
 def encontrar_projeto_recente(base_dir: Path) -> Path:
     projetos_dir = base_dir / "projetos"
     if not projetos_dir.exists():
@@ -121,6 +190,10 @@ def extrair_timestamps(pasta_projeto: Path, modelo_tamanho: str = "small"):
                 "palavras": palavras,
             }
         )
+
+    resultado["segmentos"] = fundir_segmentos_curtos_e_duplicados(
+        resultado["segmentos"], min_duracao=1.1
+    )
 
     saida_json = pasta_projeto / "03-timestamps.json"
     with open(saida_json, "w", encoding="utf-8") as f:

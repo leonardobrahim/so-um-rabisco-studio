@@ -13,6 +13,8 @@ import {
   Heart,
   MessageCircle,
   Share2,
+  Film,
+  Download,
 } from "lucide-react";
 import { api } from "../api";
 import type { ProjetoResumo } from "../types";
@@ -27,6 +29,67 @@ function formatarDuracao(segundos: number | null): string {
   const min = Math.floor(segundos / 60);
   const seg = Math.round(segundos % 60);
   return `${String(min).padStart(2, "0")}:${String(seg).padStart(2, "0")}`;
+}
+
+function tocarSomConclusao(sucesso: boolean) {
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const agora = ctx.currentTime;
+    const notas = sucesso ? [523.25, 659.25, 783.99] : [330, 261.63];
+
+    notas.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, agora + i * 0.11);
+
+      gain.gain.setValueAtTime(0.001, agora + i * 0.11);
+      gain.gain.exponentialRampToValueAtTime(0.18, agora + i * 0.11 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, agora + i * 0.11 + 0.32);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(agora + i * 0.11);
+      osc.stop(agora + i * 0.11 + 0.34);
+    });
+  } catch {
+    // Ignora caso o navegador bloqueie áudio automático
+  }
+}
+
+function notificarConclusao(nomeProjeto: string, sucesso: boolean) {
+  tocarSomConclusao(sucesso);
+
+  const tituloOriginal = document.title;
+  document.title = sucesso
+    ? `✅ Vídeo pronto! - ${nomeProjeto}`
+    : `❌ Erro no render - ${nomeProjeto}`;
+  const restaurarTitulo = () => {
+    document.title = tituloOriginal;
+    window.removeEventListener("focus", restaurarTitulo);
+  };
+  window.addEventListener("focus", restaurarTitulo);
+  setTimeout(restaurarTitulo, 10000);
+
+  if ("Notification" in window && Notification.permission === "granted") {
+    try {
+      new Notification(
+        sucesso ? "Vídeo pronto! — Só um Rabisco" : "Erro ao gerar vídeo",
+        {
+          body: sucesso
+            ? `O vídeo "${nomeProjeto}" terminou de ser gerado no HyperFrames.`
+            : `Falha ao renderizar "${nomeProjeto}". Confira os detalhes no Studio.`,
+        }
+      );
+    } catch {
+      // Ignora erro de notificação em contextos restritos
+    }
+  }
 }
 
 export function TabThumbRender({ projeto, onAtualizado }: Props) {
@@ -53,6 +116,13 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
 
   const [preparando, setPreparando] = useState(false);
   const [comLegenda, setComLegenda] = useState(true);
+  const [qualidade, setQualidade] = useState<"draft" | "looks" | "delivery">("looks");
+  const [renderStatus, setRenderStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [ultimaLinhaRender, setUltimaLinhaRender] = useState<string | null>(null);
+  const [existeVideo, setExisteVideo] = useState(false);
+  const [tamanhoVideoBytes, setTamanhoVideoBytes] = useState<number | null>(null);
+  const [caminhoVideo, setCaminhoVideo] = useState<string | null>(null);
+  const [videoCacheBust, setVideoCacheBust] = useState<number>(() => Date.now());
   const [renderLog, setRenderLog] = useState<string | null>(null);
   const [renderErro, setRenderErro] = useState<string | null>(null);
 
@@ -76,10 +146,55 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
       })
       .catch(() => {});
 
+    api
+      .statusRenderVideo(projeto.nome)
+      .then((st) => {
+        if (!ativo) return;
+        setRenderStatus(st.status);
+        setUltimaLinhaRender(st.ultima_linha);
+        setExisteVideo(st.existe_video);
+        setTamanhoVideoBytes(st.tamanho_bytes);
+        setCaminhoVideo(st.caminho_video);
+        if (st.erro) setRenderErro(st.erro);
+      })
+      .catch(() => {});
+
     return () => {
       ativo = false;
     };
   }, [projeto.nome, projeto.duracao_total]);
+
+  useEffect(() => {
+    if (renderStatus !== "running") return;
+    let ativo = true;
+    const timer = setInterval(() => {
+      api
+        .statusRenderVideo(projeto.nome)
+        .then((st) => {
+          if (!ativo) return;
+          setRenderStatus(st.status);
+          setUltimaLinhaRender(st.ultima_linha);
+          setExisteVideo(st.existe_video);
+          setTamanhoVideoBytes(st.tamanho_bytes);
+          setCaminhoVideo(st.caminho_video);
+          if (st.status === "done") {
+            setVideoCacheBust(Date.now());
+            setRenderLog("Vídeo MP4 gerado com sucesso pelo HyperFrames!");
+            setRenderErro(null);
+            notificarConclusao(projeto.nome, true);
+            onAtualizado();
+          } else if (st.status === "error") {
+            setRenderErro(st.erro || "Erro ao renderizar vídeo no HyperFrames.");
+            notificarConclusao(projeto.nome, false);
+          }
+        })
+        .catch(() => {});
+    }, 2000);
+    return () => {
+      ativo = false;
+      clearInterval(timer);
+    };
+  }, [renderStatus, projeto.nome, onAtualizado]);
 
   function carregarImagem(file: File | undefined | null) {
     if (!file || !file.type.startsWith("image/")) return;
@@ -226,18 +341,59 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
                   Sem Legenda
                 </button>
               </div>
+              <select
+                value={qualidade}
+                onChange={(e) =>
+                  setQualidade(e.target.value as "draft" | "looks" | "delivery")
+                }
+                disabled={renderStatus === "running"}
+                className="bg-[#0b0d12] border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-slate-200 outline-none cursor-pointer"
+                title="Qualidade do render HyperFrames"
+              >
+                <option value="draft">Rápido (draft)</option>
+                <option value="looks">Padrão (looks)</option>
+                <option value="delivery">Máxima (delivery)</option>
+              </select>
               <button
                 type="button"
                 onClick={() => void handlePrepararRender()}
-                disabled={preparando || !projeto.tem_cenas_json}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#ffc928] hover:bg-[#ffd452] disabled:opacity-45 text-black font-bold text-xs transition cursor-pointer shadow-sm"
+                disabled={preparando || renderStatus === "running" || !projeto.tem_cenas_json}
+                className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 text-slate-100 font-semibold text-xs transition cursor-pointer"
               >
                 {preparando ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
-                  <Rocket className="w-4 h-4" />
+                  <Rocket className="w-4 h-4 text-[#ffc928]" />
                 )}
-                Preparar Render Agora
+                Só Preparar
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setRenderErro(null);
+                  setRenderLog(null);
+                  if ("Notification" in window && Notification.permission === "default") {
+                    void Notification.requestPermission().catch(() => {});
+                  }
+                  try {
+                    await api.renderizarVideo(projeto.nome, comLegenda, qualidade);
+                    setRenderStatus("running");
+                    setUltimaLinhaRender("Preparando projeto e iniciando HyperFrames...");
+                  } catch (err) {
+                    setRenderErro(
+                      err instanceof Error ? err.message : "Erro ao iniciar renderização"
+                    );
+                  }
+                }}
+                disabled={preparando || renderStatus === "running" || !projeto.tem_cenas_json}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#ffc928] hover:bg-[#ffd452] disabled:opacity-45 text-black font-bold text-xs transition cursor-pointer shadow-sm"
+              >
+                {renderStatus === "running" ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Film className="w-4 h-4" />
+                )}
+                {renderStatus === "running" ? "Renderizando..." : "Gerar Vídeo (MP4)"}
               </button>
             </div>
           </div>
@@ -288,6 +444,20 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
             </div>
           </div>
 
+          {renderStatus === "running" && (
+            <div className="px-3.5 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-center gap-2.5">
+              <Loader2 className="w-4 h-4 animate-spin shrink-0 text-[#ffc928]" />
+              <div className="min-w-0">
+                <div className="font-semibold">Renderizando vídeo MP4 com HyperFrames...</div>
+                {ultimaLinhaRender && (
+                  <div className="text-[11px] text-amber-300/80 truncate">
+                    {ultimaLinhaRender}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {renderErro && (
             <div className="px-3.5 py-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
               {renderErro}
@@ -298,6 +468,37 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
             <div className="px-3.5 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>{renderLog}</span>
+            </div>
+          )}
+
+          {existeVideo && (
+            <div className="bg-[#0e1117] border border-slate-800 rounded-xl p-3.5 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                    <Film className="w-4 h-4" /> Vídeo Final Pronto (MP4)
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    {tamanhoVideoBytes
+                      ? `${(tamanhoVideoBytes / (1024 * 1024)).toFixed(2)} MB • `
+                      : ""}
+                    {caminhoVideo || "midia/video_final.mp4"}
+                  </div>
+                </div>
+                <a
+                  href={api.videoFinalUrl(projeto.nome, videoCacheBust)}
+                  download={`${projeto.nome}.mp4`}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-xs font-semibold transition"
+                >
+                  <Download className="w-3.5 h-3.5" /> Baixar MP4
+                </a>
+              </div>
+              <video
+                key={videoCacheBust}
+                src={api.videoFinalUrl(projeto.nome, videoCacheBust)}
+                controls
+                className="w-full max-h-72 rounded-lg bg-black"
+              />
             </div>
           )}
         </div>

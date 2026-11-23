@@ -1,8 +1,9 @@
+import json
 import sys
 from pathlib import Path
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 def eh_branco(b: int, g: int, r: int, limite: int = 235) -> bool:
@@ -79,7 +80,18 @@ def remover_fundo_externo(caminho_img: Path, margem: int = 16) -> Image.Image:
     return pil_img
 
 
-def processar_lote(pasta_origem: Path, pasta_destino: Path):
+def _detectar_manter_fundo_por_projeto(pasta_origem: Path) -> bool:
+    meta_path = pasta_origem.parent.parent / "projeto.json"
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            return meta.get("tipo") == "longo"
+        except Exception:
+            return False
+    return False
+
+
+def processar_lote(pasta_origem: Path, pasta_destino: Path, manter_fundo: bool = False):
     extensoes = {".png", ".jpg", ".jpeg", ".webp"}
     arquivos = [
         f for f in pasta_origem.iterdir()
@@ -94,14 +106,22 @@ def processar_lote(pasta_origem: Path, pasta_destino: Path):
     arquivos.sort(key=lambda f: f.name.lower())
     pasta_destino.mkdir(parents=True, exist_ok=True)
 
-    print(f"Processando {len(arquivos)} imagens de '{pasta_origem}'...")
+    modo_txt = "mantendo fundo original (video longo)" if manter_fundo else "removendo fundo branco"
+    print(f"Processando {len(arquivos)} imagens de '{pasta_origem}' ({modo_txt})...")
 
     for idx, arquivo in enumerate(arquivos, start=1):
         nome_saida = f"cena_{idx:02d}.png"
         caminho_saida = pasta_destino / nome_saida
 
-        img_limpa = remover_fundo_externo(arquivo)
-        img_limpa.save(caminho_saida, "PNG")
+        if manter_fundo:
+            with Image.open(arquivo) as img_raw:
+                img_corrigida = ImageOps.exif_transpose(img_raw)
+                if img_corrigida.mode not in ("RGB", "RGBA"):
+                    img_corrigida = img_corrigida.convert("RGB")
+                img_corrigida.save(caminho_saida, "PNG")
+        else:
+            img_limpa = remover_fundo_externo(arquivo)
+            img_limpa.save(caminho_saida, "PNG")
         print(f"  [OK] {arquivo.name} -> {nome_saida}")
 
     print(f"\nFinalizado! Imagens prontas em: {pasta_destino}")
@@ -109,10 +129,12 @@ def processar_lote(pasta_origem: Path, pasta_destino: Path):
 
 if __name__ == "__main__":
     raiz = Path(__file__).resolve().parent.parent
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    manter_fundo_flag = "--manter-fundo" in sys.argv[1:]
 
-    if len(sys.argv) >= 3:
-        origem = Path(sys.argv[1]).resolve()
-        destino = Path(sys.argv[2]).resolve()
+    if len(args) >= 2:
+        origem = Path(args[0]).resolve()
+        destino = Path(args[1]).resolve()
     else:
         # Padrao: busca a pasta de projeto mais recente e le de midia/raw para midia/cenas
         projetos_dir = raiz / "projetos"
@@ -128,4 +150,7 @@ if __name__ == "__main__":
         origem = projeto_atual / "midia" / "raw"
         destino = projeto_atual / "midia" / "cenas"
 
-    processar_lote(origem, destino)
+    if not manter_fundo_flag:
+        manter_fundo_flag = _detectar_manter_fundo_por_projeto(origem)
+
+    processar_lote(origem, destino, manter_fundo=manter_fundo_flag)
