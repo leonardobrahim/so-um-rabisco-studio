@@ -1,13 +1,20 @@
 import { useState, type FormEvent } from "react";
-import { FolderPlus, FolderOpen, Film, RefreshCw, Loader2 } from "lucide-react";
-import type { ProjetoResumo } from "../types";
+import {
+  FolderPlus,
+  FolderOpen,
+  Film,
+  Smartphone,
+  RefreshCw,
+  Loader2,
+} from "lucide-react";
+import type { ProjetoResumo, ProjetoTipo } from "../types";
 
 interface Props {
   projetos: ProjetoResumo[];
   projetoAtivo: string | null;
   carregando: boolean;
   onSelecionar: (nome: string) => void;
-  onCriar: (nome: string) => Promise<void>;
+  onCriar: (nome: string, tipo: ProjetoTipo) => Promise<void>;
   onRecarregar: () => void;
 }
 
@@ -21,14 +28,18 @@ export function SidebarProjetos({
 }: Props) {
   const [criando, setCriando] = useState(false);
   const [novoNome, setNovoNome] = useState("");
+  const [novoTipo, setNovoTipo] = useState<ProjetoTipo>("longo");
+  const [filtroTipo, setFiltroTipo] = useState<"todos" | ProjetoTipo>("todos");
   const [submitting, setSubmitting] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
-  const hojeSlug = () => {
+  const hojeSlug = (tipo: ProjetoTipo) => {
     const d = new Date();
     const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, "0");
-    return `${yyyy}-${mm}-novo-video`;
+    return tipo === "short"
+      ? `${yyyy}-${mm}-short-novo`
+      : `${yyyy}-${mm}-novo-video`;
   };
 
   async function handleSubmit(e: FormEvent) {
@@ -37,7 +48,7 @@ export function SidebarProjetos({
     setSubmitting(true);
     setErro(null);
     try {
-      await onCriar(novoNome.trim());
+      await onCriar(novoNome.trim(), novoTipo);
       setNovoNome("");
       setCriando(false);
     } catch (err) {
@@ -47,8 +58,15 @@ export function SidebarProjetos({
     }
   }
 
+  const projetosFiltrados = projetos.filter((p) =>
+    filtroTipo === "todos" ? true : p.tipo === filtroTipo
+  );
+
+  const totalLongos = projetos.filter((p) => p.tipo === "longo").length;
+  const totalShorts = projetos.filter((p) => p.tipo === "short").length;
+
   return (
-    <aside className="w-72 shrink-0 border-r border-slate-800/80 bg-[#10131a] flex flex-col h-full">
+    <aside className="w-76 shrink-0 border-r border-slate-800/80 bg-[#10131a] flex flex-col h-full">
       {/* Brand */}
       <div className="px-4 py-4 border-b border-slate-800/80 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
@@ -59,7 +77,7 @@ export function SidebarProjetos({
             <h1 className="text-sm font-bold text-slate-100 leading-tight">
               Só um Rabisco
             </h1>
-            <p className="text-[11px] text-slate-400">Studio Local v1.0</p>
+            <p className="text-[11px] text-slate-400">Studio Local v1.1</p>
           </div>
         </div>
         <button
@@ -78,7 +96,8 @@ export function SidebarProjetos({
           <button
             type="button"
             onClick={() => {
-              setNovoNome(hojeSlug());
+              setNovoTipo("longo");
+              setNovoNome(hojeSlug("longo"));
               setCriando(true);
               setErro(null);
             }}
@@ -88,7 +107,43 @@ export function SidebarProjetos({
             Novo Projeto
           </button>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-2">
+          <form onSubmit={handleSubmit} className="space-y-2.5">
+            {/* Tipo do Projeto */}
+            <div className="grid grid-cols-2 gap-1 bg-[#0b0d12] p-1 rounded-lg border border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setNovoTipo("longo");
+                  if (novoNome === hojeSlug("short")) {
+                    setNovoNome(hojeSlug("longo"));
+                  }
+                }}
+                className={`flex items-center justify-center gap-1 py-1.5 rounded text-[11px] font-semibold cursor-pointer transition ${
+                  novoTipo === "longo"
+                    ? "bg-[#ffc928] text-black"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Film className="w-3 h-3" /> Longo (16:9)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setNovoTipo("short");
+                  if (novoNome === hojeSlug("longo")) {
+                    setNovoNome(hojeSlug("short"));
+                  }
+                }}
+                className={`flex items-center justify-center gap-1 py-1.5 rounded text-[11px] font-semibold cursor-pointer transition ${
+                  novoTipo === "short"
+                    ? "bg-purple-500 text-white"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Smartphone className="w-3 h-3" /> Short (9:16)
+              </button>
+            </div>
+
             <input
               type="text"
               value={novoNome}
@@ -119,20 +174,62 @@ export function SidebarProjetos({
         )}
       </div>
 
+      {/* Filtro Longos vs Shorts */}
+      <div className="px-3 pt-2.5 pb-1">
+        <div className="grid grid-cols-3 gap-1 bg-[#0b0d12] p-1 rounded-lg border border-slate-800/80 text-[11px] font-semibold">
+          <button
+            type="button"
+            onClick={() => setFiltroTipo("todos")}
+            className={`py-1 rounded transition cursor-pointer ${
+              filtroTipo === "todos"
+                ? "bg-slate-800 text-slate-100"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            Todos ({projetos.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setFiltroTipo("longo")}
+            className={`py-1 rounded transition cursor-pointer ${
+              filtroTipo === "longo"
+                ? "bg-[#ffc928]/20 text-[#ffc928]"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            Longos ({totalLongos})
+          </button>
+          <button
+            type="button"
+            onClick={() => setFiltroTipo("short")}
+            className={`py-1 rounded transition cursor-pointer ${
+              filtroTipo === "short"
+                ? "bg-purple-500/20 text-purple-300"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            Shorts ({totalShorts})
+          </button>
+        </div>
+      </div>
+
       {/* Project List */}
       <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
-        <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-          Projetos ({projetos.length})
-        </div>
-
-        {projetos.length === 0 && !carregando && (
+        {projetosFiltrados.length === 0 && !carregando && (
           <div className="px-3 py-6 text-center text-xs text-slate-500">
-            Nenhum projeto encontrado em <code className="text-slate-400">projetos/</code>.
+            Nenhum projeto{" "}
+            {filtroTipo === "longo"
+              ? "longo"
+              : filtroTipo === "short"
+              ? "short"
+              : ""}{" "}
+            encontrado.
           </div>
         )}
 
-        {projetos.map((p) => {
+        {projetosFiltrados.map((p) => {
           const ativo = p.nome === projetoAtivo;
+          const isShort = p.tipo === "short";
           return (
             <button
               key={p.nome}
@@ -140,24 +237,43 @@ export function SidebarProjetos({
               onClick={() => onSelecionar(p.nome)}
               className={`w-full text-left p-2.5 rounded-xl border transition cursor-pointer ${
                 ativo
-                  ? "bg-[#1a1f2b] border-[#ffc928]/60 shadow-sm"
+                  ? isShort
+                    ? "bg-[#1a1829] border-purple-500/60 shadow-sm"
+                    : "bg-[#1a1f2b] border-[#ffc928]/60 shadow-sm"
                   : "bg-transparent border-transparent hover:bg-slate-800/40 hover:border-slate-800"
               }`}
             >
               <div className="flex items-start gap-2">
                 {ativo ? (
-                  <FolderOpen className="w-4 h-4 text-[#ffc928] shrink-0 mt-0.5" />
+                  <FolderOpen
+                    className={`w-4 h-4 shrink-0 mt-0.5 ${
+                      isShort ? "text-purple-400" : "text-[#ffc928]"
+                    }`}
+                  />
+                ) : isShort ? (
+                  <Smartphone className="w-4 h-4 text-purple-400/70 shrink-0 mt-0.5" />
                 ) : (
                   <Film className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
                 )}
                 <div className="min-w-0 flex-1">
-                  <div
-                    className={`text-xs font-semibold truncate ${
-                      ativo ? "text-slate-100" : "text-slate-300"
-                    }`}
-                    title={p.nome}
-                  >
-                    {p.nome}
+                  <div className="flex items-center justify-between gap-1.5">
+                    <div
+                      className={`text-xs font-semibold truncate ${
+                        ativo ? "text-slate-100" : "text-slate-300"
+                      }`}
+                      title={p.nome}
+                    >
+                      {p.nome}
+                    </div>
+                    <span
+                      className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase ${
+                        isShort
+                          ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                          : "bg-[#ffc928]/15 text-[#ffc928] border border-[#ffc928]/30"
+                      }`}
+                    >
+                      {isShort ? "9:16" : "16:9"}
+                    </span>
                   </div>
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     <span

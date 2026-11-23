@@ -1,5 +1,7 @@
 export type AbaId = "roteiro" | "audio" | "storyboard" | "imagens" | "thumb-render";
 
+export type ProjetoTipo = "longo" | "short";
+
 export type EfeitoCena =
   | "pop-in"
   | "zoom-in"
@@ -10,17 +12,28 @@ export type EfeitoCena =
 
 export interface ProjetoResumo {
   nome: string;
+  tipo: ProjetoTipo;
   atualizado_em: number;
   tem_narracao: boolean;
   tem_timestamps: boolean;
   tem_storyboard: boolean;
   tem_cenas_json: boolean;
   tem_audio: boolean;
+  tem_prompts_flow: boolean;
   qtd_imagens_cenas: number;
   qtd_imagens_raw: number;
   qtd_cenas_json: number;
   duracao_total: number | null;
-  formato: string;
+  formato: "16:9" | "9:16" | string;
+}
+
+export interface ProjetoMeta {
+  tipo: ProjetoTipo;
+  formato: "16:9" | "9:16";
+  titulo_thumb?: string;
+  duracao_thumb?: string;
+  legenda_short?: string;
+  hashtags_short?: string;
 }
 
 export interface PalavraTimestamp {

@@ -10,13 +10,16 @@ import {
   FileText,
   Copy,
   Check,
+  Wand2,
+  ArrowRight,
 } from "lucide-react";
 import { api } from "../api";
-import type { CenaItem, CenasConfig, EfeitoCena } from "../types";
+import type { AbaId, CenaItem, CenasConfig, EfeitoCena, ProjetoResumo } from "../types";
 
 interface Props {
-  projeto: string;
+  projeto: ProjetoResumo;
   onAtualizado: () => void;
+  onIrParaAba: (aba: AbaId) => void;
 }
 
 const EFEITOS: EfeitoCena[] = [
@@ -28,17 +31,19 @@ const EFEITOS: EfeitoCena[] = [
   "cut",
 ];
 
-function extrairNomePng(arquivoPath: string): string {
+function extrairNomePng(arquivoPath: string | undefined): string {
+  if (!arquivoPath) return "";
   const partes = arquivoPath.split("/");
   return partes[partes.length - 1] || "";
 }
 
-export function TabStoryboard({ projeto, onAtualizado }: Props) {
+export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
   const [config, setConfig] = useState<CenasConfig | null>(null);
   const [storyboardMd, setStoryboardMd] = useState("");
   const [imagensCenas, setImagensCenas] = useState<Set<string>>(new Set());
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
+  const [gerando, setGerando] = useState(false);
   const [modoJson, setModoJson] = useState(false);
   const [jsonTexto, setJsonTexto] = useState("");
   const [mostrarPrompts, setMostrarPrompts] = useState(false);
@@ -54,9 +59,9 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
     setErro(null);
 
     Promise.all([
-      api.lerCenas(projeto),
-      api.lerStoryboard(projeto),
-      api.listarImagens(projeto),
+      api.lerCenas(projeto.nome),
+      api.lerStoryboard(projeto.nome),
+      api.listarImagens(projeto.nome),
     ])
       .then(([cenasRes, sbRes, imgRes]) => {
         if (!ativo) return;
@@ -67,7 +72,9 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
       })
       .catch((err) => {
         if (!ativo) return;
-        setErro(err instanceof Error ? err.message : "Erro ao carregar storyboard");
+        setErro(
+          err instanceof Error ? err.message : "Erro ao carregar storyboard"
+        );
       })
       .finally(() => {
         if (ativo) setCarregando(false);
@@ -76,7 +83,7 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
     return () => {
       ativo = false;
     };
-  }, [projeto]);
+  }, [projeto.nome, projeto.tipo]);
 
   function atualizarConfig(nova: CenasConfig) {
     setConfig(nova);
@@ -85,14 +92,18 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
 
   function atualizarCena(idx: number, patch: Partial<CenaItem>) {
     if (!config) return;
-    const cenas = config.cenas.map((c, i) => (i === idx ? { ...c, ...patch } : c));
+    const cenas = config.cenas.map((c, i) =>
+      i === idx ? { ...c, ...patch } : c
+    );
     atualizarConfig({ ...config, cenas });
   }
 
   function adicionarCena() {
     if (!config) return;
     const ultimoFim =
-      config.cenas.length > 0 ? config.cenas[config.cenas.length - 1].fim : 0;
+      config.cenas.length > 0
+        ? Number(config.cenas[config.cenas.length - 1].fim) || 0
+        : 0;
     const num = String(config.cenas.length + 1).padStart(2, "0");
     const nova: CenaItem = {
       arquivo: `assets_atual/cenas/cena_${num}.png`,
@@ -111,6 +122,32 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
     atualizarConfig({ ...config, cenas });
   }
 
+  async function handleGerarAutomatico() {
+    setGerando(true);
+    setErro(null);
+    setMensagem(null);
+    try {
+      const res = await api.gerarStoryboard(projeto.nome, projeto.tipo);
+      atualizarConfig(res.cenas);
+      setStoryboardMd(res.storyboard);
+      setModoJson(false);
+      setMensagem(
+        `Gerado automaticamente a partir de ${
+          res.origem === "timestamps" ? "03-timestamps.json" : "02-narracao.txt"
+        }: ${res.qtd_cenas} cenas (${res.formato}), prompts_imagens.txt e prompts_flow.txt atualizados!`
+      );
+      onAtualizado();
+    } catch (err) {
+      setErro(
+        err instanceof Error
+          ? err.message
+          : "Erro ao gerar storyboard automático"
+      );
+    } finally {
+      setGerando(false);
+    }
+  }
+
   async function handleSalvar() {
     if (!config) return;
     setSalvando(true);
@@ -123,7 +160,7 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
         dadosParaSalvar = JSON.parse(jsonTexto) as CenasConfig;
         setConfig(dadosParaSalvar);
       }
-      const res = await api.salvarCenas(projeto, dadosParaSalvar);
+      const res = await api.salvarCenas(projeto.nome, dadosParaSalvar);
       setMensagem(`cenas.json salvo (${res.qtd_cenas} cenas).`);
       onAtualizado();
     } catch (err) {
@@ -144,7 +181,6 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  // Extrai prompts em blocos [MM:SS] ... de 04-storyboard-e-prompts.md
   const promptsExtraidos = storyboardMd
     .split(/\r?\n/)
     .filter((line) => /^\[\d{2}:\d{2}\]/.test(line.trim()));
@@ -170,7 +206,7 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
     setErro(null);
     setMensagem(null);
     try {
-      const res = await api.exportarPrompts(projeto);
+      const res = await api.exportarPrompts(projeto.nome);
       setMensagem(
         `${res.arquivo_destino} atualizado com ${res.qtd_prompts} prompt(s) deste projeto.`
       );
@@ -208,7 +244,7 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
           <label className="flex items-center gap-1.5 text-xs text-slate-400">
             Formato:
             <select
-              value={config.formato}
+              value={config.formato || projeto.formato}
               onChange={(e) =>
                 atualizarConfig({ ...config, formato: e.target.value })
               }
@@ -248,7 +284,22 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
           </label>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleGerarAutomatico()}
+            disabled={gerando}
+            title="Gera cenas.json, prompts e storyboard automaticamente a partir do áudio ou roteiro salvo"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/40 hover:bg-emerald-500/25 disabled:opacity-50 text-emerald-300 text-xs font-semibold transition cursor-pointer"
+          >
+            {gerando ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Wand2 className="w-3.5 h-3.5" />
+            )}
+            Gerar do Áudio/Roteiro
+          </button>
+
           <button
             type="button"
             onClick={() => setMostrarPrompts((v) => !v)}
@@ -272,7 +323,7 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
                 {copiadoTodos ? (
                   <>
                     <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    Todos Copiados!
+                    Copiados!
                   </>
                 ) : (
                   <>
@@ -319,7 +370,7 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
 
           <button
             type="button"
-            onClick={handleSalvar}
+            onClick={() => void handleSalvar()}
             disabled={salvando}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#ffc928] hover:bg-[#ffd452] disabled:opacity-50 text-black text-xs font-semibold transition cursor-pointer"
           >
@@ -329,6 +380,14 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
               <Save className="w-3.5 h-3.5" />
             )}
             Salvar (Ctrl+S)
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onIrParaAba("imagens")}
+            className="flex items-center gap-1 px-3 py-2 rounded-lg border border-slate-700 hover:border-[#ffc928]/60 text-slate-200 text-xs font-medium transition cursor-pointer"
+          >
+            Imagens <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -341,17 +400,17 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
 
       {mensagem && (
         <div className="px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4" />
-          {mensagem}
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <span>{mensagem}</span>
         </div>
       )}
 
-      {/* Prompts Drawer / Panel */}
+      {/* Prompts Drawer */}
       {mostrarPrompts && (
         <div className="bg-[#141821] border border-slate-800 rounded-xl p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Prompts de 04-storyboard-e-prompts.md
+              Prompts de 04-storyboard-e-prompts.md ({projeto.formato})
             </h4>
             <div className="flex items-center gap-3">
               <span className="text-[11px] text-slate-500">
@@ -419,18 +478,44 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
           className="min-h-[520px] w-full bg-[#12151d] border border-slate-800 focus:border-[#ffc928] rounded-xl p-4 font-mono text-xs text-slate-200 outline-none resize-y"
         />
       ) : config.cenas.length === 0 ? (
-        <div className="bg-[#141821] border border-slate-800 rounded-xl p-10 text-center space-y-3">
-          <p className="text-sm text-slate-400">
-            Nenhuma cena cadastrada em <code>cenas.json</code> ainda.
-          </p>
-          <button
-            type="button"
-            onClick={adicionarCena}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#ffc928] text-black text-xs font-semibold cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            Adicionar Primeira Cena
-          </button>
+        <div className="bg-[#141821] border border-slate-800 rounded-xl p-10 text-center space-y-4">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-slate-200">
+              Nenhuma cena gerada ainda para este projeto
+            </p>
+            <p className="text-xs text-slate-400">
+              {projeto.tem_timestamps
+                ? "O áudio já foi transcrito! Clique abaixo para decupar automaticamente em cenas e prompts."
+                : projeto.tem_narracao
+                ? "O roteiro já está salvo! Clique abaixo para gerar uma decupagem estimada ou envie o áudio na aba Áudio."
+                : "Salve o roteiro na aba 1 ou envie o áudio na aba 2 para gerar tudo automaticamente."}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            {(projeto.tem_timestamps || projeto.tem_narracao) && (
+              <button
+                type="button"
+                onClick={() => void handleGerarAutomatico()}
+                disabled={gerando}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#ffc928] hover:bg-[#ffd452] text-black text-xs font-bold cursor-pointer"
+              >
+                {gerando ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Wand2 className="w-4 h-4" />
+                )}
+                Gerar Cenas & Prompts Automaticamente ({projeto.formato})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={adicionarCena}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              Adicionar Cena Manual
+            </button>
+          </div>
         </div>
       ) : (
         <div className="bg-[#141821] border border-slate-800 rounded-xl overflow-hidden">
@@ -454,9 +539,12 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
                 {config.cenas.map((cena, idx) => {
                   const nomePng = extrairNomePng(cena.arquivo);
                   const temImagem = imagensCenas.has(nomePng);
-                  const dur = Math.max(0, cena.fim - cena.inicio);
-                  const qtdPalavras = cena.texto.trim()
-                    ? cena.texto.trim().split(/\s+/).length
+                  const inicio = Number(cena.inicio) || 0;
+                  const fim = Number(cena.fim) || 0;
+                  const dur = Math.max(0, fim - inicio);
+                  const textoStr = cena.texto ?? "";
+                  const qtdPalavras = textoStr.trim()
+                    ? textoStr.trim().split(/\s+/).length
                     : 0;
 
                   return (
@@ -468,10 +556,14 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
                         {String(idx + 1).padStart(2, "0")}
                       </td>
                       <td className="py-2 px-3">
-                        <div className="w-12 h-8 rounded border border-slate-700 overflow-hidden checkerboard-dark flex items-center justify-center">
+                        <div
+                          className={`${
+                            projeto.tipo === "short" ? "w-8 h-12" : "w-12 h-8"
+                          } rounded border border-slate-700 overflow-hidden checkerboard-dark flex items-center justify-center`}
+                        >
                           {temImagem ? (
                             <img
-                              src={api.imagemCenaUrl(projeto, nomePng)}
+                              src={api.imagemCenaUrl(projeto.nome, nomePng)}
                               alt={nomePng}
                               className="w-full h-full object-contain"
                               loading="lazy"
@@ -484,7 +576,7 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
                       <td className="py-2 px-3">
                         <input
                           type="text"
-                          value={cena.arquivo}
+                          value={cena.arquivo ?? ""}
                           onChange={(e) =>
                             atualizarCena(idx, { arquivo: e.target.value })
                           }
@@ -495,7 +587,7 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
                         <input
                           type="number"
                           step="0.01"
-                          value={cena.inicio}
+                          value={inicio}
                           onChange={(e) =>
                             atualizarCena(idx, {
                               inicio: Number(e.target.value) || 0,
@@ -508,7 +600,7 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
                         <input
                           type="number"
                           step="0.01"
-                          value={cena.fim}
+                          value={fim}
                           onChange={(e) =>
                             atualizarCena(idx, {
                               fim: Number(e.target.value) || 0,
@@ -522,7 +614,7 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
                       </td>
                       <td className="py-2 px-3">
                         <select
-                          value={cena.efeito}
+                          value={cena.efeito || "pop-in"}
                           onChange={(e) =>
                             atualizarCena(idx, { efeito: e.target.value })
                           }
@@ -536,27 +628,25 @@ export function TabStoryboard({ projeto, onAtualizado }: Props) {
                         </select>
                       </td>
                       <td className="py-2 px-3">
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="text"
-                            value={cena.texto}
-                            onChange={(e) =>
-                              atualizarCena(idx, { texto: e.target.value })
-                            }
-                            placeholder="Opcional (máx 3 palavras)"
-                            className={`w-full min-w-[150px] bg-[#0e1117] border rounded px-2 py-1 text-slate-200 outline-none ${
-                              qtdPalavras > 3
-                                ? "border-amber-500/60"
-                                : "border-slate-800 focus:border-[#ffc928]"
-                            }`}
-                          />
-                        </div>
+                        <input
+                          type="text"
+                          value={textoStr}
+                          onChange={(e) =>
+                            atualizarCena(idx, { texto: e.target.value })
+                          }
+                          placeholder="Opcional (máx 3 palavras)"
+                          className={`w-full min-w-[150px] bg-[#0e1117] border rounded px-2 py-1 text-slate-200 outline-none ${
+                            qtdPalavras > 3
+                              ? "border-amber-500/60"
+                              : "border-slate-800 focus:border-[#ffc928]"
+                          }`}
+                        />
                       </td>
                       <td className="py-2 px-3">
                         <input
                           type="number"
                           step="0.1"
-                          value={cena.escala}
+                          value={cena.escala ?? 1}
                           onChange={(e) =>
                             atualizarCena(idx, {
                               escala: Number(e.target.value) || 1,

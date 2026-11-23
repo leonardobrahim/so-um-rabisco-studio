@@ -15,35 +15,53 @@ def remover_fundo_externo(caminho_img: Path, margem: int = 16) -> Image.Image:
     if img is None:
         raise ValueError(f"Nao foi possivel ler a imagem: {caminho_img}")
 
-    if img.shape[2] == 4:
-        bgr = img[:, :, :3].copy()
+    if img.ndim == 2:
+        bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    elif img.shape[2] == 4:
+        # Compoe sobre branco caso a imagem de entrada ja tenha canal alpha
+        alpha_in = img[:, :, 3:4].astype(np.float32) / 255.0
+        bgr_in = img[:, :, :3].astype(np.float32)
+        bgr = np.clip(bgr_in * alpha_in + 255.0 * (1.0 - alpha_in), 0, 255).astype(np.uint8)
     else:
-        bgr = img.copy()
+        bgr = img[:, :, :3].copy()
 
     h, w = bgr.shape[:2]
-    mask = np.zeros((h + 2, w + 2), np.uint8)
-    flags = 4 | (255 << 8) | cv2.FLOODFILL_MASK_ONLY
-    tolerancia = (18, 18, 18)
 
-    # Varre as 4 bordas da imagem para remover apenas o fundo branco conectado ao exterior
-    # Isso preserva a cabeca branca e o tenis branco dentro dos contornos pretos
-    for x in range(w):
-        if mask[1, x + 1] == 0 and eh_branco(*bgr[0, x]):
-            cv2.floodFill(bgr, mask, (x, 0), (0, 0, 0), tolerancia, tolerancia, flags)
-        if mask[h, x + 1] == 0 and eh_branco(*bgr[h - 1, x]):
-            cv2.floodFill(bgr, mask, (x, h - 1), (0, 0, 0), tolerancia, tolerancia, flags)
+    # 1. Identifica apenas pixels realmente claros e neutros (sem saturacao de cor)
+    # Isso garante que moletom amarelo (#FFC928), calca azul, cerebro rosa ou sombras azuis
+    # NUNCA sejam considerados fundo, mesmo que o contorno tenha falhas.
+    b_ch, g_ch, r_ch = cv2.split(bgr)
+    min_ch = np.minimum(np.minimum(b_ch, g_ch), r_ch)
+    max_ch = np.maximum(np.maximum(b_ch, g_ch), r_ch)
+    diff_ch = max_ch.astype(np.int16) - min_ch.astype(np.int16)
 
-    for y in range(h):
-        if mask[y + 1, 1] == 0 and eh_branco(*bgr[y, 0]):
-            cv2.floodFill(bgr, mask, (0, y), (0, 0, 0), tolerancia, tolerancia, flags)
-        if mask[y + 1, w] == 0 and eh_branco(*bgr[y, w - 1]):
-            cv2.floodFill(bgr, mask, (w - 1, y), (0, 0, 0), tolerancia, tolerancia, flags)
+    pode_ser_fundo = (min_ch >= 232) & (diff_ch <= 16)
 
-    fundo = mask[1:-1, 1:-1]
-    alpha = 255 - fundo
+    # 2. Cria uma barreira temporaria selando micro-falhas (1-2px) do traco preto desenhado a mao
+    # para que o preenchimento externo nao vaze para dentro da cabeca branca ou dos tenis.
+    cinza = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    linhas_escuras = (cinza < 185).astype(np.uint8) * 255
+    kernel_selo = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    linhas_seladas = cv2.dilate(linhas_escuras, kernel_selo, iterations=1)
 
-    # Suaviza levemente a borda do recorte para evitar serrilhado no traco preto
-    alpha = cv2.GaussianBlur(alpha, (3, 3), 0)
+    candidatos_selados = (pode_ser_fundo & (linhas_seladas == 0)).astype(np.uint8) * 255
+
+    # 3. Adiciona borda externa de 1px de fundo garantido para capturar TODO o fundo conectado
+    # as 4 bordas da imagem em um unico connectedComponents (muito mais seguro que floodFill flutuante).
+    padded = np.pad(candidatos_selados, ((1, 1), (1, 1)), mode="constant", constant_values=255)
+    _, labels = cv2.connectedComponents(padded, connectivity=4)
+    fundo_exterior = (labels[1:-1, 1:-1] == labels[0, 0])
+
+    # 4. Recupera o 1px adjacente ao traco escuro que foi bloqueado apenas pelo selo temporario,
+    # desde que esse pixel seja realmente branco/neutro (evita halo branco ao redor do personagem).
+    fundo_expandido = cv2.dilate(fundo_exterior.astype(np.uint8), kernel_selo, iterations=1) > 0
+    fundo_final = fundo_exterior | (fundo_expandido & (min_ch >= 224) & (diff_ch <= 18))
+
+    # 5. Constroi canal alpha limpo com suavizacao leve apenas na borda de transicao
+    alpha = np.where(fundo_final, 0, 255).astype(np.uint8)
+    borda_suave = cv2.GaussianBlur(alpha, (3, 3), 0)
+    # Mantem o interior do personagem 100% opaco e o fundo distante 100% transparente
+    alpha = np.where(fundo_final, np.minimum(alpha, borda_suave), np.where(borda_suave < 255, borda_suave, 255))
 
     rgba = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGBA)
     rgba[:, :, 3] = alpha

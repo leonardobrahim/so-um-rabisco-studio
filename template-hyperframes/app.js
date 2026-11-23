@@ -148,10 +148,8 @@ async function inicializarComposicao() {
     if (dados.fps) {
         comp.setAttribute("data-fps", String(dados.fps));
     }
-
-    const audioEl = document.getElementById("voiceover");
-    if (dados.audio) {
-        audioEl.src = dados.audio;
+    if (dados.duracao_total) {
+        comp.setAttribute("data-duration", String(dados.duracao_total));
     }
 
     const stage = document.getElementById("stage");

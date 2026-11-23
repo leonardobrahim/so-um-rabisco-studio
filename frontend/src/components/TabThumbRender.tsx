@@ -8,6 +8,11 @@ import {
   Image as ImageIcon,
   Sun,
   Moon,
+  Copy,
+  Check,
+  Heart,
+  MessageCircle,
+  Share2,
 } from "lucide-react";
 import { api } from "../api";
 import type { ProjetoResumo } from "../types";
@@ -25,16 +30,26 @@ function formatarDuracao(segundos: number | null): string {
 }
 
 export function TabThumbRender({ projeto, onAtualizado }: Props) {
+  const isShort = projeto.tipo === "short";
+  const tituloPadrao =
+    projeto.nome
+      .replace(/^\d{4}-\d{2}-(short-)?/, "")
+      .replace(/-/g, " ") ||
+    "Por Que Você Sempre Fica Sem Dinheiro Todo Mês";
+
   const [thumbDataUrl, setThumbDataUrl] = useState<string | null>(null);
-  const [titulo, setTitulo] = useState(
-    projeto.nome.replace(/^\d{4}-\d{2}-/, "").replace(/-/g, " ") ||
-      "Por Que Você Sempre Fica Sem Dinheiro Todo Mês"
+  const [titulo, setTitulo] = useState(tituloPadrao);
+  const [duracao, setDuracao] = useState(() =>
+    formatarDuracao(projeto.duracao_total)
   );
-  const [duracao, setDuracao] = useState(() => formatarDuracao(projeto.duracao_total));
   const [metaTexto, setMetaTexto] = useState("18 mil visualizações • há 4 horas");
+  const [hashtags, setHashtags] = useState(
+    "#psicologia #animacao #soumrabisco #shorts"
+  );
   const [temaPhone, setTemaPhone] = useState<"dark" | "light">("dark");
   const [dragOver, setDragOver] = useState(false);
   const [cortouNoCelular, setCortouNoCelular] = useState(false);
+  const [copiadoPromptThumb, setCopiadoPromptThumb] = useState(false);
 
   const [preparando, setPreparando] = useState(false);
   const [renderLog, setRenderLog] = useState<string | null>(null);
@@ -44,9 +59,25 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
   const titlePreviewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setDuracao(formatarDuracao(projeto.duracao_total));
+    let ativo = true;
     setRenderLog(null);
     setRenderErro(null);
+    setDuracao(formatarDuracao(projeto.duracao_total));
+    setTitulo(tituloPadrao);
+
+    api
+      .lerMeta(projeto.nome)
+      .then((res) => {
+        if (!ativo) return;
+        if (res.meta.titulo_thumb) setTitulo(res.meta.titulo_thumb);
+        if (res.meta.duracao_thumb) setDuracao(res.meta.duracao_thumb);
+        if (res.meta.hashtags_short) setHashtags(res.meta.hashtags_short);
+      })
+      .catch(() => {});
+
+    return () => {
+      ativo = false;
+    };
   }, [projeto.nome, projeto.duracao_total]);
 
   function carregarImagem(file: File | undefined | null) {
@@ -60,7 +91,6 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
     reader.readAsDataURL(file);
   }
 
-  // Suporte para Ctrl + V de imagem direto na tela
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
@@ -76,7 +106,6 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
     return () => window.removeEventListener("paste", onPaste);
   }, []);
 
-  // Verifica se o texto passou de 2 linhas no card mobile
   useEffect(() => {
     const id = requestAnimationFrame(() => {
       const el = titlePreviewRef.current;
@@ -84,7 +113,11 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
       setCortouNoCelular(el.scrollHeight > el.clientHeight + 1);
     });
     return () => cancelAnimationFrame(id);
-  }, [titulo]);
+  }, [titulo, isShort]);
+
+  function salvarMetaSilencioso(patch: Record<string, string>) {
+    void api.atualizarMeta(projeto.nome, patch).catch(() => {});
+  }
 
   function handleDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
@@ -109,29 +142,45 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
     }
   }
 
+  const promptThumbPaperBillions = `Dramatic 2D graphic novel cartoon YouTube thumbnail about "${titulo.trim()}". Close-up on the left of a minimalist cartoon character with a large rounded pale-white head, messy spiky black hair, wearing a vibrant yellow hoodie (#FFC928), extreme shocked and panicked expression with wide eyes, small pupils and sweat drops. On the right, a glowing symbolic object casting intense neon rim light onto the character's hair and hoodie. Detailed dark navy atmospheric background (#050811) with subtle blur, thick black outlines, cel-shading, dramatic lighting, 16:9 aspect ratio.`;
+
+  async function copiarPromptThumb() {
+    await navigator.clipboard.writeText(promptThumbPaperBillions);
+    setCopiadoPromptThumb(true);
+    setTimeout(() => setCopiadoPromptThumb(false), 1800);
+  }
+
   const textoLimpo = titulo.trim();
-  const palavras = textoLimpo ? textoLimpo.split(/\s+/).filter(Boolean).length : 0;
+  const palavras = textoLimpo
+    ? textoLimpo.split(/\s+/).filter(Boolean).length
+    : 0;
   const caracteres = textoLimpo.length;
 
-  const classePalavras =
-    palavras >= 7 && palavras <= 8
+  const classePalavras = isShort
+    ? palavras >= 3 && palavras <= 7
       ? "bg-emerald-500/15 text-emerald-400"
-      : palavras >= 5 && palavras <= 10
-      ? "bg-amber-500/15 text-amber-300"
-      : "bg-rose-500/15 text-rose-400";
+      : "bg-amber-500/15 text-amber-300"
+    : palavras >= 7 && palavras <= 8
+    ? "bg-emerald-500/15 text-emerald-400"
+    : palavras >= 5 && palavras <= 10
+    ? "bg-amber-500/15 text-amber-300"
+    : "bg-rose-500/15 text-rose-400";
 
-  const classeCaracteres =
-    caracteres >= 45 && caracteres <= 55
+  const classeCaracteres = isShort
+    ? caracteres <= 55
       ? "bg-emerald-500/15 text-emerald-400"
-      : caracteres <= 65
-      ? "bg-amber-500/15 text-amber-300"
-      : "bg-rose-500/15 text-rose-400";
+      : "bg-rose-500/15 text-rose-400"
+    : caracteres >= 45 && caracteres <= 55
+    ? "bg-emerald-500/15 text-emerald-400"
+    : caracteres <= 65
+    ? "bg-amber-500/15 text-amber-300"
+    : "bg-rose-500/15 text-rose-400";
 
   const isDarkPhone = temaPhone === "dark";
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-      {/* Coluna Esquerda: Controles de Thumb + Preparar Render */}
+      {/* Coluna Esquerda: Preparar Render + Controles */}
       <div className="xl:col-span-7 flex flex-col gap-5">
         {/* Card Preparar Render */}
         <div className="bg-[#141821] border border-slate-800 rounded-2xl p-5 space-y-4">
@@ -139,16 +188,18 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
             <div>
               <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
                 <Rocket className="w-4 h-4 text-[#ffc928]" />
-                Preparar Render (<code>template-hyperframes/</code>)
+                Preparar Render (
+                {isShort ? "1080×1920 • 9:16 Short" : "1920×1080 • 16:9 Longo"})
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Copia <code>cenas.json</code>, áudio e PNGs recortados para a pasta de renderização via{" "}
+                Copia <code>cenas.json</code>, áudio e PNGs recortados para{" "}
+                <code>template-hyperframes/</code> via{" "}
                 <code>scripts/preparar_render.py</code>.
               </p>
             </div>
             <button
               type="button"
-              onClick={handlePrepararRender}
+              onClick={() => void handlePrepararRender()}
               disabled={preparando || !projeto.tem_cenas_json}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#ffc928] hover:bg-[#ffd452] disabled:opacity-45 text-black font-bold text-xs transition cursor-pointer shadow-sm"
             >
@@ -172,7 +223,7 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
                 <div className="font-semibold text-slate-200">cenas.json</div>
                 <div className="text-[11px] text-slate-400">
                   {projeto.tem_cenas_json
-                    ? `${projeto.qtd_cenas_json} cenas`
+                    ? `${projeto.qtd_cenas_json} cenas (${projeto.formato})`
                     : "Pendente"}
                 </div>
               </div>
@@ -221,21 +272,29 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
           )}
         </div>
 
-        {/* Card Controles do Preview Mobile */}
+        {/* Card Controles do Preview */}
         <div className="bg-[#141821] border border-slate-800 rounded-2xl p-5 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
               <Smartphone className="w-4 h-4 text-[#ffc928]" />
-              Preview de Clique Mobile
+              {isShort
+                ? "Preview Vertical (Shorts / Reels / TikTok 9:16)"
+                : "Preview de Clique Mobile (YouTube 16:9)"}
             </h3>
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-[#ffc928] text-black uppercase">
-              Só um Rabisco
+            <span
+              className={`text-[11px] font-bold px-2 py-0.5 rounded uppercase ${
+                isShort
+                  ? "bg-purple-500 text-white"
+                  : "bg-[#ffc928] text-black"
+              }`}
+            >
+              {isShort ? "Short 9:16" : "Longo 16:9"}
             </span>
           </div>
 
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-400">
-              1. Thumbnail (16:9)
+              1. {isShort ? "Capa / Frame Vertical (9:16)" : "Thumbnail (16:9)"}
             </label>
             <div
               onClick={() => fileInputRef.current?.click()}
@@ -261,7 +320,9 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
               <div className="flex items-center justify-center gap-2 text-xs text-slate-300">
                 <ImageIcon className="w-4 h-4 text-[#ffc928]" />
                 <span>
-                  Clique, arraste ou aperte <strong className="text-[#ffc928]">Ctrl + V</strong> em qualquer lugar
+                  Clique, arraste ou aperte{" "}
+                  <strong className="text-[#ffc928]">Ctrl + V</strong> em qualquer
+                  lugar
                 </span>
               </div>
             </div>
@@ -269,20 +330,27 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
 
           <div className="space-y-2">
             <label className="text-xs font-semibold text-slate-400">
-              2. Título do Vídeo (Regra: 7 a 8 palavras)
+              2. {isShort ? "Título / Gancho do Short" : "Título do Vídeo (Regra: 7 a 8 palavras)"}
             </label>
             <textarea
               value={titulo}
-              onChange={(e) => setTitulo(e.target.value)}
+              onChange={(e) => {
+                setTitulo(e.target.value);
+                salvarMetaSilencioso({ titulo_thumb: e.target.value });
+              }}
               rows={2}
               placeholder="Digite o título para testar no celular..."
               className="w-full bg-[#0e1117] border border-slate-700 focus:border-[#ffc928] rounded-xl p-3 text-sm text-slate-100 outline-none resize-y"
             />
             <div className="flex flex-wrap gap-2">
-              <span className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${classePalavras}`}>
+              <span
+                className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${classePalavras}`}
+              >
                 {palavras} {palavras === 1 ? "palavra" : "palavras"}
               </span>
-              <span className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${classeCaracteres}`}>
+              <span
+                className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${classeCaracteres}`}
+              >
                 {caracteres} caracteres
               </span>
               <span
@@ -299,242 +367,365 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {isShort ? (
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-400">Duração</label>
+              <label className="text-xs font-semibold text-slate-400">
+                Hashtags do Short
+              </label>
               <input
                 type="text"
-                value={duracao}
-                onChange={(e) => setDuracao(e.target.value)}
+                value={hashtags}
+                onChange={(e) => {
+                  setHashtags(e.target.value);
+                  salvarMetaSilencioso({ hashtags_short: e.target.value });
+                }}
                 className="w-full bg-[#0e1117] border border-slate-700 focus:border-[#ffc928] rounded-xl px-3 py-2 text-xs text-slate-100 outline-none"
               />
             </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-400">Views e Tempo</label>
-              <input
-                type="text"
-                value={metaTexto}
-                onChange={(e) => setMetaTexto(e.target.value)}
-                className="w-full bg-[#0e1117] border border-slate-700 focus:border-[#ffc928] rounded-xl px-3 py-2 text-xs text-slate-100 outline-none"
-              />
-            </div>
-          </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-400">
+                    Duração
+                  </label>
+                  <input
+                    type="text"
+                    value={duracao}
+                    onChange={(e) => {
+                      setDuracao(e.target.value);
+                      salvarMetaSilencioso({ duracao_thumb: e.target.value });
+                    }}
+                    className="w-full bg-[#0e1117] border border-slate-700 focus:border-[#ffc928] rounded-xl px-3 py-2 text-xs text-slate-100 outline-none"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-400">
+                    Views e Tempo
+                  </label>
+                  <input
+                    type="text"
+                    value={metaTexto}
+                    onChange={(e) => setMetaTexto(e.target.value)}
+                    className="w-full bg-[#0e1117] border border-slate-700 focus:border-[#ffc928] rounded-xl px-3 py-2 text-xs text-slate-100 outline-none"
+                  />
+                </div>
+              </div>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-400">
-              Tema do App no Celular
-            </label>
-            <div className="grid grid-cols-2 gap-1 bg-[#0e1117] p-1 rounded-xl border border-slate-800">
-              <button
-                type="button"
-                onClick={() => setTemaPhone("dark")}
-                className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                  isDarkPhone
-                    ? "bg-slate-800 text-white"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Moon className="w-3.5 h-3.5" /> Modo Escuro
-              </button>
-              <button
-                type="button"
-                onClick={() => setTemaPhone("light")}
-                className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                  !isDarkPhone
-                    ? "bg-slate-800 text-white"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Sun className="w-3.5 h-3.5" /> Modo Claro
-              </button>
-            </div>
-          </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-400">
+                  Tema do App no Celular
+                </label>
+                <div className="grid grid-cols-2 gap-1 bg-[#0e1117] p-1 rounded-xl border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setTemaPhone("dark")}
+                    className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                      isDarkPhone
+                        ? "bg-slate-800 text-white"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    <Moon className="w-3.5 h-3.5" /> Modo Escuro
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTemaPhone("light")}
+                    className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                      !isDarkPhone
+                        ? "bg-slate-800 text-white"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    <Sun className="w-3.5 h-3.5" /> Modo Claro
+                  </button>
+                </div>
+              </div>
+
+              {/* Prompt de Thumb Paper Billions automático */}
+              <div className="bg-[#0e1117] border border-slate-800 rounded-xl p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                    Prompt de Thumbnail (Paper Billions 16:9)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void copiarPromptThumb()}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-200 font-medium cursor-pointer"
+                  >
+                    {copiadoPromptThumb ? (
+                      <>
+                        <Check className="w-3 h-3 text-emerald-400" /> Copiado
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3 h-3 text-[#ffc928]" /> Copiar Prompt
+                      </>
+                    )}
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  {promptThumbPaperBillions}
+                </p>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Coluna Direita: Simulador Mobile YouTube */}
+      {/* Coluna Direita: Simulador Mobile (16:9 Feed ou 9:16 Shorts) */}
       <div className="xl:col-span-5 flex justify-center">
-        <div
-          className={`w-[360px] h-[680px] rounded-[38px] border-[9px] border-[#262a34] shadow-2xl overflow-hidden flex flex-col shrink-0 transition-colors ${
-            isDarkPhone
-              ? "bg-[#0f0f0f] text-[#f1f1f1]"
-              : "bg-white text-[#0f0f0f]"
-          }`}
-        >
-          {/* Status bar */}
-          <div className="flex justify-between px-5 pt-2.5 pb-1.5 text-[11px] font-semibold">
-            <span>21:42</span>
-            <span>5G • 84%</span>
-          </div>
-
-          {/* YouTube Header */}
-          <div className="flex items-center justify-between px-3.5 py-2">
-            <div className="flex items-center gap-1.5 font-extrabold text-base tracking-tight">
-              <div className="w-6 h-4 bg-[#ff0000] rounded flex items-center justify-center">
-                <div className="w-0 h-0 border-y-[3.5px] border-y-transparent border-l-[6px] border-l-white ml-0.5" />
-              </div>
-              <span>YouTube</span>
-            </div>
-            <div className="flex gap-3 text-xs opacity-75">
-              <span>Cast</span>
-              <span>Sino</span>
-              <span>Busca</span>
-            </div>
-          </div>
-
-          {/* Chips */}
-          <div
-            className={`flex gap-2 px-3 pt-1.5 pb-2.5 overflow-hidden border-b ${
-              isDarkPhone ? "border-[#272727]" : "border-[#e5e5e5]"
-            }`}
-          >
-            <span
-              className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap ${
-                isDarkPhone
-                  ? "bg-[#f1f1f1] text-[#0f0f0f]"
-                  : "bg-[#0f0f0f] text-white"
-              }`}
-            >
-              Tudo
-            </span>
-            {["Psicologia", "Animação", "Recentes"].map((chip) => (
-              <span
-                key={chip}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap ${
-                  isDarkPhone ? "bg-[#272727]" : "bg-[#f2f2f2]"
-                }`}
-              >
-                {chip}
-              </span>
-            ))}
-          </div>
-
-          {/* Feed */}
-          <div className="flex-1 overflow-y-auto">
-            {/* Seu Vídeo */}
-            <div className="mb-4">
-              <div className="relative w-full aspect-video bg-[#1c1f26] overflow-hidden">
-                {thumbDataUrl ? (
-                  <img
-                    src={thumbDataUrl}
-                    alt="Thumbnail preview"
-                    className="w-full h-full object-cover block"
-                  />
-                ) : (
-                  <div
-                    className="w-full h-full flex flex-col items-center justify-center text-white text-center p-4"
-                    style={{
-                      background:
-                        "radial-gradient(circle at 75% 50%, #2a183b 0%, #050811 75%)",
-                    }}
-                  >
-                    <span className="font-black text-lg tracking-wide drop-shadow">
-                      COLE SUA THUMB (CTRL+V)
-                    </span>
-                    <small className="text-[#ffc928] mt-1 text-[11px]">
-                      Padrão Só um Rabisco 16:9
-                    </small>
-                  </div>
-                )}
-                <div className="absolute right-2 bottom-2 bg-black/80 text-white text-[11px] font-semibold px-1.5 py-0.5 rounded">
-                  {duracao || "00:00"}
-                </div>
-              </div>
-
-              <div className="flex gap-3 px-3 pt-3 pb-1 items-start">
-                <div className="w-9 h-9 rounded-full shrink-0 overflow-hidden bg-[#1b1f2a]">
-                  <svg width="36" height="36" viewBox="0 0 36 36">
-                    <rect width="36" height="36" fill="#232938" />
-                    <path
-                      d="M8 36 C8 27, 28 27, 28 36 Z"
-                      fill="#FFC928"
-                      stroke="#000"
-                      strokeWidth="1.8"
-                    />
-                    <circle
-                      cx="18"
-                      cy="17"
-                      r="9.5"
-                      fill="#F8FAFC"
-                      stroke="#000"
-                      strokeWidth="1.8"
-                    />
-                    <path
-                      d="M9 14 L7 9 L12 11 L15 6 L19 10 L23 6 L25 11 L29 10 L27 15 Z"
-                      fill="#111"
-                    />
-                    <ellipse cx="15" cy="17" rx="1.3" ry="2" fill="#111" />
-                    <ellipse cx="21" cy="17" rx="1.3" ry="2" fill="#111" />
-                  </svg>
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <div
-                    ref={titlePreviewRef}
-                    className="text-[14px] font-medium leading-[19px] line-clamp-2 break-words"
-                  >
-                    {textoLimpo || "Título do vídeo..."}
-                  </div>
-                  <div
-                    className={`text-[12px] mt-1 leading-4 ${
-                      isDarkPhone ? "text-[#aaaaaa]" : "text-[#606060]"
-                    }`}
-                  >
-                    Só um rabisco • {metaTexto}
-                  </div>
-                </div>
-                <div
-                  className={`text-base px-0.5 ${
-                    isDarkPhone ? "text-[#aaaaaa]" : "text-[#606060]"
-                  }`}
-                >
-                  ⋮
-                </div>
-              </div>
-            </div>
-
-            {/* Vídeo Concorrente no Feed */}
-            <div className="opacity-45 mb-4">
+        {isShort ? (
+          /* Simulador Short 9:16 com Safe Zones */
+          <div className="w-[340px] h-[640px] rounded-[38px] border-[9px] border-[#262a34] bg-[#0b0d12] shadow-2xl overflow-hidden relative flex flex-col shrink-0">
+            {thumbDataUrl ? (
+              <img
+                src={thumbDataUrl}
+                alt="Preview Short 9:16"
+                className="w-full h-full object-cover"
+              />
+            ) : (
               <div
-                className="relative w-full aspect-video flex items-center justify-center text-[#8da9c4] text-xs font-semibold"
+                className="w-full h-full flex flex-col items-center justify-center text-white text-center p-6"
                 style={{
-                  background: "linear-gradient(135deg, #1f3a52, #0d1b2a)",
+                  background:
+                    "radial-gradient(circle at 50% 40%, #2a183b 0%, #050811 80%)",
                 }}
               >
-                Vídeo concorrente no feed
-                <div className="absolute right-2 bottom-2 bg-black/80 text-white text-[11px] font-semibold px-1.5 py-0.5 rounded">
-                  12:15
-                </div>
+                <span className="font-black text-lg tracking-wide">
+                  CAPA / FRAME 9:16
+                </span>
+                <small className="text-[#ffc928] mt-1.5 text-xs">
+                  Aperte Ctrl+V para testar a área segura
+                </small>
               </div>
-              <div className="flex gap-3 px-3 pt-3 pb-1 items-start">
-                <div
-                  className={`w-9 h-9 rounded-full shrink-0 ${
-                    isDarkPhone ? "bg-[#272727]" : "bg-[#e5e5e5]"
+            )}
+
+            {/* Top Safe Zone */}
+            <div className="absolute top-3 inset-x-4 flex justify-between items-center text-[11px] font-semibold text-white/90 drop-shadow">
+              <span>Shorts</span>
+              <span className="px-2 py-0.5 rounded bg-black/40">9:16</span>
+            </div>
+
+            {/* Right Action Rail (Safe Zone) */}
+            <div className="absolute right-3 bottom-24 flex flex-col items-center gap-4 text-white drop-shadow">
+              <div className="flex flex-col items-center gap-0.5">
+                <div className="w-9 h-9 rounded-full bg-black/40 flex items-center justify-center">
+                  <Heart className="w-4 h-4" />
+                </div>
+                <span className="text-[10px]">12 mil</span>
+              </div>
+              <div className="flex flex-col items-center gap-0.5">
+                <div className="w-9 h-9 rounded-full bg-black/40 flex items-center justify-center">
+                  <MessageCircle className="w-4 h-4" />
+                </div>
+                <span className="text-[10px]">340</span>
+              </div>
+              <div className="flex flex-col items-center gap-0.5">
+                <div className="w-9 h-9 rounded-full bg-black/40 flex items-center justify-center">
+                  <Share2 className="w-4 h-4" />
+                </div>
+                <span className="text-[10px]">Enviar</span>
+              </div>
+            </div>
+
+            {/* Bottom Caption Safe Zone */}
+            <div className="absolute inset-x-0 bottom-0 p-4 pt-12 bg-gradient-to-t from-black/90 via-black/50 to-transparent text-white pr-14">
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="w-6 h-6 rounded-full bg-[#ffc928] text-black font-black text-[10px] flex items-center justify-center">
+                  SR
+                </div>
+                <span className="text-xs font-bold">@soumrabisco</span>
+              </div>
+              <div
+                ref={titlePreviewRef}
+                className="text-[13px] font-medium leading-snug line-clamp-2 break-words"
+              >
+                {textoLimpo || "Título do Short..."}
+              </div>
+              <div className="text-[11px] text-slate-300 mt-1 truncate">
+                {hashtags}
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* Simulador YouTube Feed Mobile 16:9 */
+          <div
+            className={`w-[360px] h-[680px] rounded-[38px] border-[9px] border-[#262a34] shadow-2xl overflow-hidden flex flex-col shrink-0 transition-colors ${
+              isDarkPhone
+                ? "bg-[#0f0f0f] text-[#f1f1f1]"
+                : "bg-white text-[#0f0f0f]"
+            }`}
+          >
+            <div className="flex justify-between px-5 pt-2.5 pb-1.5 text-[11px] font-semibold">
+              <span>21:42</span>
+              <span>5G • 84%</span>
+            </div>
+
+            <div className="flex items-center justify-between px-3.5 py-2">
+              <div className="flex items-center gap-1.5 font-extrabold text-base tracking-tight">
+                <div className="w-6 h-4 bg-[#ff0000] rounded flex items-center justify-center">
+                  <div className="w-0 h-0 border-y-[3.5px] border-y-transparent border-l-[6px] border-l-white ml-0.5" />
+                </div>
+                <span>YouTube</span>
+              </div>
+              <div className="flex gap-3 text-xs opacity-75">
+                <span>Cast</span>
+                <span>Sino</span>
+                <span>Busca</span>
+              </div>
+            </div>
+
+            <div
+              className={`flex gap-2 px-3 pt-1.5 pb-2.5 overflow-hidden border-b ${
+                isDarkPhone ? "border-[#272727]" : "border-[#e5e5e5]"
+              }`}
+            >
+              <span
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap ${
+                  isDarkPhone
+                    ? "bg-[#f1f1f1] text-[#0f0f0f]"
+                    : "bg-[#0f0f0f] text-white"
+                }`}
+              >
+                Tudo
+              </span>
+              {["Psicologia", "Animação", "Recentes"].map((chip) => (
+                <span
+                  key={chip}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap ${
+                    isDarkPhone ? "bg-[#272727]" : "bg-[#f2f2f2]"
                   }`}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="text-[14px] font-medium leading-[19px] line-clamp-2">
-                    Como Organizar Sua Rotina Sem Perder Tempo
+                >
+                  {chip}
+                </span>
+              ))}
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              <div className="mb-4">
+                <div className="relative w-full aspect-video bg-[#1c1f26] overflow-hidden">
+                  {thumbDataUrl ? (
+                    <img
+                      src={thumbDataUrl}
+                      alt="Thumbnail preview"
+                      className="w-full h-full object-cover block"
+                    />
+                  ) : (
+                    <div
+                      className="w-full h-full flex flex-col items-center justify-center text-white text-center p-4"
+                      style={{
+                        background:
+                          "radial-gradient(circle at 75% 50%, #2a183b 0%, #050811 75%)",
+                      }}
+                    >
+                      <span className="font-black text-lg tracking-wide drop-shadow">
+                        COLE SUA THUMB (CTRL+V)
+                      </span>
+                      <small className="text-[#ffc928] mt-1 text-[11px]">
+                        Padrão Só um Rabisco 16:9
+                      </small>
+                    </div>
+                  )}
+                  <div className="absolute right-2 bottom-2 bg-black/80 text-white text-[11px] font-semibold px-1.5 py-0.5 rounded">
+                    {duracao || "00:00"}
+                  </div>
+                </div>
+
+                <div className="flex gap-3 px-3 pt-3 pb-1 items-start">
+                  <div className="w-9 h-9 rounded-full shrink-0 overflow-hidden bg-[#1b1f2a]">
+                    <svg width="36" height="36" viewBox="0 0 36 36">
+                      <rect width="36" height="36" fill="#232938" />
+                      <path
+                        d="M8 36 C8 27, 28 27, 28 36 Z"
+                        fill="#FFC928"
+                        stroke="#000"
+                        strokeWidth="1.8"
+                      />
+                      <circle
+                        cx="18"
+                        cy="17"
+                        r="9.5"
+                        fill="#F8FAFC"
+                        stroke="#000"
+                        strokeWidth="1.8"
+                      />
+                      <path
+                        d="M9 14 L7 9 L12 11 L15 6 L19 10 L23 6 L25 11 L29 10 L27 15 Z"
+                        fill="#111"
+                      />
+                      <ellipse cx="15" cy="17" rx="1.3" ry="2" fill="#111" />
+                      <ellipse cx="21" cy="17" rx="1.3" ry="2" fill="#111" />
+                    </svg>
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div
+                      ref={titlePreviewRef}
+                      className="text-[14px] font-medium leading-[19px] line-clamp-2 break-words"
+                    >
+                      {textoLimpo || "Título do vídeo..."}
+                    </div>
+                    <div
+                      className={`text-[12px] mt-1 leading-4 ${
+                        isDarkPhone ? "text-[#aaaaaa]" : "text-[#606060]"
+                      }`}
+                    >
+                      Só um rabisco • {metaTexto}
+                    </div>
                   </div>
                   <div
-                    className={`text-[12px] mt-1 ${
+                    className={`text-base px-0.5 ${
                       isDarkPhone ? "text-[#aaaaaa]" : "text-[#606060]"
                     }`}
                   >
-                    Canal Exemplo • 94 mil visualizações • há 2 dias
+                    ⋮
                   </div>
                 </div>
+              </div>
+
+              <div className="opacity-45 mb-4">
                 <div
-                  className={`text-base px-0.5 ${
-                    isDarkPhone ? "text-[#aaaaaa]" : "text-[#606060]"
-                  }`}
+                  className="relative w-full aspect-video flex items-center justify-center text-[#8da9c4] text-xs font-semibold"
+                  style={{
+                    background: "linear-gradient(135deg, #1f3a52, #0d1b2a)",
+                  }}
                 >
-                  ⋮
+                  Vídeo concorrente no feed
+                  <div className="absolute right-2 bottom-2 bg-black/80 text-white text-[11px] font-semibold px-1.5 py-0.5 rounded">
+                    12:15
+                  </div>
+                </div>
+                <div className="flex gap-3 px-3 pt-3 pb-1 items-start">
+                  <div
+                    className={`w-9 h-9 rounded-full shrink-0 ${
+                      isDarkPhone ? "bg-[#272727]" : "bg-[#e5e5e5]"
+                    }`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[14px] font-medium leading-[19px] line-clamp-2">
+                      Como Organizar Sua Rotina Sem Perder Tempo
+                    </div>
+                    <div
+                      className={`text-[12px] mt-1 ${
+                        isDarkPhone ? "text-[#aaaaaa]" : "text-[#606060]"
+                      }`}
+                    >
+                      Canal Exemplo • 94 mil visualizações • há 2 dias
+                    </div>
+                  </div>
+                  <div
+                    className={`text-base px-0.5 ${
+                      isDarkPhone ? "text-[#aaaaaa]" : "text-[#606060]"
+                    }`}
+                  >
+                    ⋮
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

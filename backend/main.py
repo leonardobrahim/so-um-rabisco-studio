@@ -5,12 +5,19 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+
+from backend.pipeline import (
+    gerar_storyboard_automatico,
+    inferir_tipo_projeto,
+    ler_ou_criar_meta_projeto,
+    salvar_meta_projeto,
+)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 PROJETOS_DIR = ROOT_DIR / "projetos"
@@ -36,6 +43,15 @@ app.add_middleware(
 
 class CriarProjetoPayload(BaseModel):
     nome: str
+    tipo: Literal["longo", "short"] = "longo"
+
+
+class AtualizarMetaPayload(BaseModel):
+    tipo: Literal["longo", "short"] | None = None
+    titulo_thumb: str | None = None
+    duracao_thumb: str | None = None
+    legenda_short: str | None = None
+    hashtags_short: str | None = None
 
 
 class TextoPayload(BaseModel):
@@ -130,14 +146,17 @@ def _resumo_projeto(pasta: Path) -> dict[str, Any]:
 
     duracao_total = None
     qtd_cenas_json = 0
-    formato = "16:9"
+    tipo = inferir_tipo_projeto(pasta)
+    formato = "9:16" if tipo == "short" else "16:9"
 
     if tem_cenas_json:
         try:
             cenas_data = json.loads((pasta / "cenas.json").read_text(encoding="utf-8"))
             duracao_total = cenas_data.get("duracao_total")
             qtd_cenas_json = len(cenas_data.get("cenas", []))
-            formato = cenas_data.get("formato", "16:9")
+            formato = cenas_data.get("formato", formato)
+            if formato == "9:16":
+                tipo = "short"
         except Exception:
             pass
 
@@ -150,12 +169,14 @@ def _resumo_projeto(pasta: Path) -> dict[str, Any]:
 
     return {
         "nome": pasta.name,
+        "tipo": tipo,
         "atualizado_em": pasta.stat().st_mtime,
         "tem_narracao": tem_narracao,
         "tem_timestamps": tem_timestamps,
         "tem_storyboard": tem_storyboard,
         "tem_cenas_json": tem_cenas_json,
         "tem_audio": tem_audio,
+        "tem_prompts_flow": (pasta / "prompts_flow.txt").exists(),
         "qtd_imagens_cenas": qtd_imagens_cenas,
         "qtd_imagens_raw": qtd_imagens_raw,
         "qtd_cenas_json": qtd_cenas_json,
@@ -194,8 +215,48 @@ def criar_projeto(payload: CriarProjetoPayload) -> dict[str, Any]:
         f"# Storyboard e Prompts - {pasta.name}\n\n", encoding="utf-8"
     )
     (pasta / "05-seo-e-thumb.md").write_text(f"# SEO e Thumb - {pasta.name}\n\n", encoding="utf-8")
+    salvar_meta_projeto(pasta, payload.tipo)
 
     return {"projeto": _resumo_projeto(pasta)}
+
+
+@app.get("/api/projetos/{nome}/meta")
+def ler_meta(nome: str) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    return {"meta": ler_ou_criar_meta_projeto(pasta)}
+
+
+@app.patch("/api/projetos/{nome}/meta")
+def atualizar_meta(nome: str, payload: AtualizarMetaPayload) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    meta_atual = ler_ou_criar_meta_projeto(pasta)
+    novo_tipo = payload.tipo or meta_atual.get("tipo", "longo")
+
+    extras: dict[str, Any] = {}
+    if payload.titulo_thumb is not None:
+        extras["titulo_thumb"] = payload.titulo_thumb
+    if payload.duracao_thumb is not None:
+        extras["duracao_thumb"] = payload.duracao_thumb
+    if payload.legenda_short is not None:
+        extras["legenda_short"] = payload.legenda_short
+    if payload.hashtags_short is not None:
+        extras["hashtags_short"] = payload.hashtags_short
+
+    meta_salva = salvar_meta_projeto(pasta, novo_tipo, extras=extras)
+
+    # Sincroniza formato dentro de cenas.json caso exista e o tipo tenha mudado
+    cenas_path = pasta / "cenas.json"
+    if payload.tipo and cenas_path.exists():
+        try:
+            cenas_data = json.loads(cenas_path.read_text(encoding="utf-8"))
+            cenas_data["formato"] = meta_salva["formato"]
+            cenas_path.write_text(
+                json.dumps(cenas_data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+    return {"ok": True, "meta": meta_salva, "projeto": _resumo_projeto(pasta)}
 
 
 @app.get("/api/projetos/{nome}/narracao")
@@ -282,16 +343,28 @@ def ler_timestamps(nome: str) -> dict[str, Any]:
     return {"existe": True, "dados": dados}
 
 
+@app.post("/api/projetos/{nome}/gerar-storyboard")
+def gerar_storyboard_endpoint(nome: str, tipo: str | None = None) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    try:
+        resultado = gerar_storyboard_automatico(pasta, tipo_forcado=tipo)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return resultado
+
+
 @app.get("/api/projetos/{nome}/cenas")
 def ler_cenas(nome: str) -> dict[str, Any]:
     pasta = _resolver_projeto(nome)
     arquivo = pasta / "cenas.json"
+    tipo = inferir_tipo_projeto(pasta)
+    formato_padrao = "9:16" if tipo == "short" else "16:9"
     if not arquivo.exists():
         return {
             "existe": False,
             "dados": {
                 "projeto": pasta.name,
-                "formato": "16:9",
+                "formato": formato_padrao,
                 "fps": 30,
                 "duracao_total": 0,
                 "audio": "assets_atual/audio.wav",
@@ -318,7 +391,11 @@ def salvar_cenas(nome: str, payload: CenasPayload) -> dict[str, Any]:
 
 
 @app.post("/api/projetos/{nome}/audio")
-async def upload_audio(nome: str, file: UploadFile = File(...)) -> dict[str, Any]:
+async def upload_audio(
+    nome: str,
+    file: UploadFile = File(...),
+    gerar_storyboard: bool = True,
+) -> dict[str, Any]:
     pasta = _resolver_projeto(nome)
     midia_dir = pasta / "midia"
     midia_dir.mkdir(parents=True, exist_ok=True)
@@ -337,12 +414,25 @@ async def upload_audio(nome: str, file: UploadFile = File(...)) -> dict[str, Any
     if timestamps_path.exists():
         timestamps = json.loads(timestamps_path.read_text(encoding="utf-8"))
 
+    storyboard_info = None
+    if gerar_storyboard and timestamps is not None:
+        try:
+            res_sb = gerar_storyboard_automatico(pasta)
+            storyboard_info = {
+                "qtd_cenas": res_sb["qtd_cenas"],
+                "formato": res_sb["formato"],
+                "origem": res_sb["origem"],
+            }
+        except Exception:
+            storyboard_info = None
+
     return {
         "ok": True,
         "arquivo_salvo": "midia/audio.wav",
         "tamanho_bytes": len(conteudo),
         "log": resultado_script["stdout"],
         "timestamps": timestamps,
+        "storyboard_gerado": storyboard_info,
     }
 
 
@@ -411,6 +501,38 @@ async def upload_imagens_em_lote(
     return {
         "ok": True,
         "enviados": salvos,
+        "cenas_geradas": cenas_geradas,
+        "log": resultado_script["stdout"],
+    }
+
+
+@app.post("/api/projetos/{nome}/imagens/reprocessar")
+def reprocessar_imagens(nome: str) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    raw_dir = pasta / "midia" / "raw"
+    cenas_dir = pasta / "midia" / "cenas"
+
+    if not raw_dir.is_dir() or not any(f.is_file() for f in raw_dir.iterdir()):
+        raise HTTPException(
+            status_code=400,
+            detail="Nenhuma imagem encontrada em midia/raw/ para reprocessar.",
+        )
+
+    cenas_dir.mkdir(parents=True, exist_ok=True)
+    for antigo in cenas_dir.iterdir():
+        if antigo.is_file():
+            antigo.unlink()
+
+    resultado_script = _executar_script(
+        "limpar_imagens.py",
+        [str(raw_dir), str(cenas_dir)],
+        timeout_sec=300,
+    )
+    cenas_geradas = sorted(
+        [f.name for f in cenas_dir.iterdir() if f.is_file() and f.suffix.lower() == ".png"]
+    )
+    return {
+        "ok": True,
         "cenas_geradas": cenas_geradas,
         "log": resultado_script["stdout"],
     }

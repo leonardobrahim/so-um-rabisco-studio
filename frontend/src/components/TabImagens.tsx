@@ -6,18 +6,26 @@ import {
   CheckCircle2,
   Trash2,
   Images,
+  ArrowRight,
+  Copy,
+  Check,
 } from "lucide-react";
 import { api } from "../api";
+import type { AbaId, ProjetoResumo } from "../types";
 
 interface Props {
-  projeto: string;
+  projeto: ProjetoResumo;
   onAtualizado: () => void;
+  onIrParaAba: (aba: AbaId) => void;
 }
 
-export function TabImagens({ projeto, onAtualizado }: Props) {
+export function TabImagens({ projeto, onAtualizado, onIrParaAba }: Props) {
   const [fila, setFila] = useState<File[]>([]);
   const [cenasProntas, setCenasProntas] = useState<string[]>([]);
   const [rawArquivos, setRawArquivos] = useState<string[]>([]);
+  const [promptsCount, setPromptsCount] = useState(0);
+  const [promptsTexto, setPromptsTexto] = useState("");
+  const [copiado, setCopiado] = useState(false);
   const [limparAnteriores, setLimparAnteriores] = useState(true);
   const [carregando, setCarregando] = useState(true);
   const [processando, setProcessando] = useState(false);
@@ -28,12 +36,20 @@ export function TabImagens({ projeto, onAtualizado }: Props) {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  async function carregarLista() {
+  async function carregarDados() {
     setCarregando(true);
     try {
-      const res = await api.listarImagens(projeto);
-      setCenasProntas(res.cenas);
-      setRawArquivos(res.raw);
+      const [imgRes, sbRes] = await Promise.all([
+        api.listarImagens(projeto.nome),
+        api.lerStoryboard(projeto.nome),
+      ]);
+      setCenasProntas(imgRes.cenas);
+      setRawArquivos(imgRes.raw);
+      const linhas = sbRes.conteudo
+        .split(/\r?\n/)
+        .filter((l) => /^\[\d{2}:\d{2}\]/.test(l.trim()));
+      setPromptsCount(linhas.length);
+      setPromptsTexto(linhas.join("\n\n"));
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Erro ao listar imagens");
     } finally {
@@ -45,8 +61,8 @@ export function TabImagens({ projeto, onAtualizado }: Props) {
     setFila([]);
     setLog(null);
     setErro(null);
-    void carregarLista();
-  }, [projeto]);
+    void carregarDados();
+  }, [projeto.nome]);
 
   function adicionarArquivos(fileList: FileList | null) {
     if (!fileList) return;
@@ -70,7 +86,7 @@ export function TabImagens({ projeto, onAtualizado }: Props) {
     setErro(null);
     setLog(null);
     try {
-      const res = await api.uploadImagens(projeto, fila, limparAnteriores);
+      const res = await api.uploadImagens(projeto.nome, fila, limparAnteriores);
       setCenasProntas(res.cenas_geradas);
       setFila([]);
       setCacheBust(Date.now());
@@ -78,17 +94,118 @@ export function TabImagens({ projeto, onAtualizado }: Props) {
         res.log ||
           `${res.cenas_geradas.length} imagens processadas em midia/cenas/.`
       );
-      await carregarLista();
+      await carregarDados();
       onAtualizado();
     } catch (err) {
-      setErro(err instanceof Error ? err.message : "Erro ao processar imagens");
+      setErro(
+        err instanceof Error ? err.message : "Erro ao processar imagens"
+      );
     } finally {
       setProcessando(false);
     }
   }
 
+  async function handleReprocessarRaw() {
+    setProcessando(true);
+    setErro(null);
+    setLog(null);
+    try {
+      const res = await api.reprocessarImagens(projeto.nome);
+      setCenasProntas(res.cenas_geradas);
+      setCacheBust(Date.now());
+      setLog(
+        res.log ||
+          `${res.cenas_geradas.length} imagens reprocessadas a partir de midia/raw/.`
+      );
+      await carregarDados();
+      onAtualizado();
+    } catch (err) {
+      setErro(
+        err instanceof Error ? err.message : "Erro ao reprocessar imagens"
+      );
+    } finally {
+      setProcessando(false);
+    }
+  }
+
+  async function handleCopiarPrompts() {
+    if (!promptsTexto) return;
+    await navigator.clipboard.writeText(promptsTexto);
+    setCopiado(true);
+    setTimeout(() => setCopiado(false), 1800);
+  }
+
+  const isShort = projeto.tipo === "short";
+  const esperadas = projeto.qtd_cenas_json || promptsCount;
+
   return (
     <div className="flex flex-col gap-5">
+      {/* Barra de status interligado com Storyboard */}
+      <div className="bg-[#141821] border border-slate-800 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <span className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-200 font-semibold">
+            Proporção esperada:{" "}
+            <strong className={isShort ? "text-purple-300" : "text-[#ffc928]"}>
+              {isShort ? "9:16 (Short Vertical)" : "16:9 (Longo Horizontal)"}
+            </strong>
+          </span>
+          <span className="text-slate-300">
+            Cenas no Storyboard: <strong>{esperadas}</strong> • PNGs prontos:{" "}
+            <strong
+              className={
+                esperadas > 0 && cenasProntas.length >= esperadas
+                  ? "text-emerald-400"
+                  : "text-amber-300"
+              }
+            >
+              {cenasProntas.length}
+            </strong>
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {rawArquivos.length > 0 && (
+            <button
+              type="button"
+              disabled={processando}
+              onClick={() => void handleReprocessarRaw()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#ffc928]/15 border border-[#ffc928]/40 hover:bg-[#ffc928]/25 disabled:opacity-50 text-[#ffc928] text-xs font-semibold cursor-pointer"
+            >
+              {processando ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5" />
+              )}
+              Reprocessar raw/ ({rawArquivos.length})
+            </button>
+          )}
+          {promptsTexto && (
+            <button
+              type="button"
+              onClick={() => void handleCopiarPrompts()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-700 bg-[#0e1117] hover:border-[#ffc928]/60 text-slate-200 text-xs font-medium cursor-pointer"
+            >
+              {copiado ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" /> Copiados!
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-[#ffc928]" /> Copiar Prompts ({promptsCount})
+                </>
+              )}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onIrParaAba("thumb-render")}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-700 hover:border-[#ffc928]/60 text-slate-200 text-xs font-medium cursor-pointer"
+          >
+            Thumb / Render <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
       {/* Batch Upload Zone */}
       <div className="bg-[#141821] border border-slate-800 rounded-xl p-5 space-y-4">
         <div
@@ -118,10 +235,10 @@ export function TabImagens({ projeto, onAtualizado }: Props) {
           />
           <ImagePlus className="w-8 h-8 text-[#ffc928]" />
           <div className="text-sm font-semibold text-slate-200">
-            Upload em lote de ilustrações (<code>midia/raw/</code>)
+            Upload em lote de ilustrações {isShort ? "9:16" : "16:9"} (<code>midia/raw/</code>)
           </div>
           <p className="text-xs text-slate-400">
-            Arraste várias imagens (.png, .jpg, .webp) na ordem das cenas ou clique para selecionar.
+            Arraste todas as imagens na ordem das cenas ou clique para selecionar.
           </p>
         </div>
 
@@ -151,7 +268,7 @@ export function TabImagens({ projeto, onAtualizado }: Props) {
                 </button>
                 <button
                   type="button"
-                  onClick={handleEnviarEProcessar}
+                  onClick={() => void handleEnviarEProcessar()}
                   disabled={processando}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#ffc928] hover:bg-[#ffd452] disabled:opacity-50 text-black font-semibold text-xs transition cursor-pointer"
                 >
@@ -229,15 +346,25 @@ export function TabImagens({ projeto, onAtualizado }: Props) {
             Nenhuma imagem processada em <code>midia/cenas/</code> ainda.
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          <div
+            className={`grid gap-3 ${
+              isShort
+                ? "grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7"
+                : "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6"
+            }`}
+          >
             {cenasProntas.map((nome) => (
               <div
                 key={nome}
                 className="bg-[#0e1117] border border-slate-800 rounded-xl overflow-hidden flex flex-col"
               >
-                <div className="aspect-video checkerboard-dark flex items-center justify-center p-2">
+                <div
+                  className={`${
+                    isShort ? "aspect-[9/16]" : "aspect-video"
+                  } checkerboard-dark flex items-center justify-center p-2`}
+                >
                   <img
-                    src={api.imagemCenaUrl(projeto, nome, cacheBust)}
+                    src={api.imagemCenaUrl(projeto.nome, nome, cacheBust)}
                     alt={nome}
                     className="max-h-full max-w-full object-contain"
                     loading="lazy"

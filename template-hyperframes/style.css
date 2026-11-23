@@ -10,7 +10,8 @@ body {
     height: 100%;
     background-color: #ffffff;
     overflow: hidden;
-    font-family: "Arial Black", "Impact", sans-serif;
+    font-family: sans-serif;
+    font-weight: 900;
 }
 
 #composition {

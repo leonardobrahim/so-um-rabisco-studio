@@ -11,6 +11,9 @@ frontend/dist/
 # Projetos e arquivos temporários de mídia/render
 projetos/
 template-hyperframes/assets_atual/
+template-hyperframes/.hyperframes/
+prompts_imagens.txt
+prompts_completos.txt
 *.mp3
 *.mp4
 *.wav

@@ -5,10 +5,11 @@ import {
   Clapperboard,
   Images,
   Smartphone,
+  Film,
   AlertTriangle,
 } from "lucide-react";
 import { api } from "./api";
-import type { AbaId, ProjetoResumo } from "./types";
+import type { AbaId, ProjetoResumo, ProjetoTipo } from "./types";
 import { SidebarProjetos } from "./components/SidebarProjetos";
 import { TabRoteiro } from "./components/TabRoteiro";
 import { TabAudio } from "./components/TabAudio";
@@ -29,6 +30,7 @@ export function App() {
   const [projetoAtivoNome, setProjetoAtivoNome] = useState<string | null>(null);
   const [abaAtiva, setAbaAtiva] = useState<AbaId>("roteiro");
   const [carregando, setCarregando] = useState(true);
+  const [trocandoTipo, setTrocandoTipo] = useState(false);
   const [erroApi, setErroApi] = useState<string | null>(null);
 
   const carregarProjetos = useCallback(async (selecionarNome?: string) => {
@@ -57,10 +59,25 @@ export function App() {
     void carregarProjetos();
   }, [carregarProjetos]);
 
-  async function handleCriarProjeto(nome: string) {
-    const res = await api.criarProjeto(nome);
+  async function handleCriarProjeto(nome: string, tipo: ProjetoTipo) {
+    const res = await api.criarProjeto(nome, tipo);
     await carregarProjetos(res.projeto.nome);
     setAbaAtiva("roteiro");
+  }
+
+  async function handleAlterarTipo(tipo: ProjetoTipo) {
+    if (!projetoAtivo || projetoAtivo.tipo === tipo) return;
+    setTrocandoTipo(true);
+    try {
+      await api.atualizarMeta(projetoAtivo.nome, { tipo });
+      await carregarProjetos(projetoAtivo.nome);
+    } catch (err) {
+      setErroApi(
+        err instanceof Error ? err.message : "Erro ao alterar tipo do projeto"
+      );
+    } finally {
+      setTrocandoTipo(false);
+    }
   }
 
   const projetoAtivo =
@@ -81,7 +98,7 @@ export function App() {
         {/* Top Bar */}
         <header className="border-b border-slate-800/80 bg-[#10131a]/90 px-6 pt-4 pb-0 shrink-0">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-            <div>
+            <div className="min-w-0">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                 Projeto Ativo
               </span>
@@ -91,13 +108,39 @@ export function App() {
             </div>
 
             {projetoAtivo && (
-              <div className="flex items-center gap-2 text-xs text-slate-400">
-                <span className="px-2.5 py-1 rounded-lg bg-[#181d27] border border-slate-800">
-                  Formato:{" "}
-                  <strong className="text-slate-200">{projetoAtivo.formato}</strong>
-                </span>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                {/* Seletor Longo vs Short */}
+                <div className="flex items-center bg-[#0b0d12] p-0.5 rounded-lg border border-slate-800">
+                  <button
+                    type="button"
+                    disabled={trocandoTipo}
+                    onClick={() => void handleAlterarTipo("longo")}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition cursor-pointer ${
+                      projetoAtivo.tipo === "longo"
+                        ? "bg-[#ffc928] text-black"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    <Film className="w-3.5 h-3.5" />
+                    Vídeo Longo (16:9)
+                  </button>
+                  <button
+                    type="button"
+                    disabled={trocandoTipo}
+                    onClick={() => void handleAlterarTipo("short")}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition cursor-pointer ${
+                      projetoAtivo.tipo === "short"
+                        ? "bg-purple-500 text-white"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    Short (9:16)
+                  </button>
+                </div>
+
                 {projetoAtivo.duracao_total ? (
-                  <span className="px-2.5 py-1 rounded-lg bg-[#181d27] border border-slate-800">
+                  <span className="px-2.5 py-1.5 rounded-lg bg-[#181d27] border border-slate-800">
                     Duração:{" "}
                     <strong className="text-slate-200">
                       {projetoAtivo.duracao_total}s
@@ -155,8 +198,8 @@ export function App() {
                   Selecione ou crie um projeto na barra lateral
                 </p>
                 <p className="text-xs text-slate-500">
-                  Cada projeto fica salvo em <code>projetos/&lt;nome&gt;/</code> e
-                  integra roteiro, Whisper, storyboard, remoção de fundo e preview mobile.
+                  Separe vídeos longos (16:9) de Shorts (9:16) e conecte roteiro,
+                  áudio, storyboard, imagens e preview automaticamente.
                 </p>
               </div>
             </div>
@@ -164,27 +207,30 @@ export function App() {
             <>
               {abaAtiva === "roteiro" && (
                 <TabRoteiro
-                  projeto={projetoAtivo.nome}
+                  projeto={projetoAtivo}
                   onAtualizado={() => void carregarProjetos(projetoAtivo.nome)}
+                  onIrParaAba={setAbaAtiva}
                 />
               )}
               {abaAtiva === "audio" && (
                 <TabAudio
-                  projeto={projetoAtivo.nome}
-                  temAudio={projetoAtivo.tem_audio}
+                  projeto={projetoAtivo}
                   onAtualizado={() => void carregarProjetos(projetoAtivo.nome)}
+                  onIrParaAba={setAbaAtiva}
                 />
               )}
               {abaAtiva === "storyboard" && (
                 <TabStoryboard
-                  projeto={projetoAtivo.nome}
+                  projeto={projetoAtivo}
                   onAtualizado={() => void carregarProjetos(projetoAtivo.nome)}
+                  onIrParaAba={setAbaAtiva}
                 />
               )}
               {abaAtiva === "imagens" && (
                 <TabImagens
-                  projeto={projetoAtivo.nome}
+                  projeto={projetoAtivo}
                   onAtualizado={() => void carregarProjetos(projetoAtivo.nome)}
+                  onIrParaAba={setAbaAtiva}
                 />
               )}
               {abaAtiva === "thumb-render" && (
