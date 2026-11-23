@@ -16,8 +16,9 @@
 - Bia: cabelo castanho preso em rabo de cavalo, regata verde, calça legging preta, segurando um pequeno caderno, no mesmo traço 2D minimalista.
 
 ## Direção de Storyboard e Prompts de Imagem
-- Ritmo visual dinâmico: planeje cortes ou mudanças de enquadramento a cada 1 a 2 segundos acompanhando a fala.
-- Quando houver arquivo de timestamps (`03-timestamps.json`), vincule cada prompt ao tempo exato da narração no formato `[00:00] prompt`.
-- Idioma dos prompts: sempre em INGLÊS (otimizado para Whisk/ImageFX). Se houver texto dentro da ilustração, especifique esse texto em PORTUGUÊS.
-- Nunca confie na memória do gerador de imagens: repita a descrição física completa do protagonista e do estilo em todos os prompts.
-- Proporção obrigatória: `16:9` para vídeos longos do YouTube e `9:16` para Shorts, Reels e TikTok.
+- Ritmo visual dinâmico: planeje cortes a cada **1,5 a 3 segundos** no máximo (cerca de **25 a 35 cenas por minuto**), acompanhando a fala.
+- Fidelidade ao roteiro atual: leia o roteiro completo do projeto e crie uma ação/cena específica para a fala exata de cada corte (literal ou metafórica), sem usar poses genéricas nem repetir a mesma pose em sequência.
+- Timestamps únicos e estritamente crescentes: quando houver arquivo `03-timestamps.json`, vincule cada prompt ao tempo exato no formato `[MM:SS] prompt`, sem nunca repetir o mesmo segundo em duas linhas.
+- Idioma dos prompts: sempre em **INGLÊS** (otimizado para Whisk/ImageFX/Flow). Qualquer texto que apareça dentro da ilustração deve ser especificado em **PORTUGUÊS DO BRASIL**.
+- Nunca confie na memória do gerador de imagens: repita a descrição física completa do protagonista e do estilo em **todas as linhas** (`Featuring a minimalist 2D cartoon character with a large rounded pale-white head (about 1/3 of total body height) with a slight light-blue shading area on the left side of the head, messy spiky black hair, simple oval black eyes, expressive minimalist face with eyebrows and mouth, compact small body wearing a vibrant yellow hoodie (#FFC928), dark navy blue pants, and low white sneakers with black details. 2D minimalist cartoon illustration, hand-drawn doodle and marker aesthetic, thick clean black outlines, flat colors, slightly irregular lines, pure solid white background (#FFFFFF), no photorealism, no 3D, no heavy gradients, no realistic shadows, no excessive detail, 9:16 aspect ratio.` ou `16:9 aspect ratio.`).
+- Proporção obrigatória: `9:16` para Shorts, Reels e TikTok e `16:9` para vídeos longos do YouTube.

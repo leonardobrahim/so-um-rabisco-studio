@@ -49,6 +49,10 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
   const [mostrarPrompts, setMostrarPrompts] = useState(false);
   const [copiadoIdx, setCopiadoIdx] = useState<number | null>(null);
   const [copiadoTodos, setCopiadoTodos] = useState(false);
+  const [pacoteChat, setPacoteChat] = useState<string>("");
+  const [copiadoPacote, setCopiadoPacote] = useState(false);
+  const [promptsColados, setPromptsColados] = useState("");
+  const [salvandoColados, setSalvandoColados] = useState(false);
   const [mensagem, setMensagem] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -62,13 +66,15 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
       api.lerCenas(projeto.nome),
       api.lerStoryboard(projeto.nome),
       api.listarImagens(projeto.nome),
+      api.obterPacoteChat(projeto.nome, projeto.tipo).catch(() => null),
     ])
-      .then(([cenasRes, sbRes, imgRes]) => {
+      .then(([cenasRes, sbRes, imgRes, pkgRes]) => {
         if (!ativo) return;
         setConfig(cenasRes.dados);
         setJsonTexto(JSON.stringify(cenasRes.dados, null, 2));
         setStoryboardMd(sbRes.conteudo);
         setImagensCenas(new Set(imgRes.cenas));
+        setPacoteChat(pkgRes?.pacote ?? "");
       })
       .catch((err) => {
         if (!ativo) return;
@@ -219,6 +225,49 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
     }
   }
 
+  async function copiarPacoteAntigravity() {
+    setErro(null);
+    try {
+      let texto = pacoteChat;
+      if (!texto) {
+        const res = await api.obterPacoteChat(projeto.nome, projeto.tipo);
+        texto = res.pacote;
+        setPacoteChat(texto);
+      }
+      await navigator.clipboard.writeText(texto);
+      setCopiadoPacote(true);
+      setTimeout(() => setCopiadoPacote(false), 2200);
+    } catch (err) {
+      setErro(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível montar o pacote (verifique se há roteiro ou áudio)."
+      );
+    }
+  }
+
+  async function salvarPromptsColados() {
+    if (!promptsColados.trim()) return;
+    setSalvandoColados(true);
+    setErro(null);
+    setMensagem(null);
+    try {
+      const res = await api.salvarStoryboard(projeto.nome, promptsColados);
+      setStoryboardMd(promptsColados);
+      setPromptsColados("");
+      setMensagem(
+        `Prompts salvos em 04-storyboard-e-prompts.md e prompts_imagens.txt (${res.prompts_atualizados} prompts).`
+      );
+      onAtualizado();
+    } catch (err) {
+      setErro(
+        err instanceof Error ? err.message : "Erro ao salvar prompts colados"
+      );
+    } finally {
+      setSalvandoColados(false);
+    }
+  }
+
   if (carregando || !config) {
     return (
       <div className="flex items-center justify-center h-64 text-slate-400 gap-2 text-sm">
@@ -298,6 +347,25 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
               <Wand2 className="w-3.5 h-3.5" />
             )}
             Gerar do Áudio/Roteiro
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void copiarPacoteAntigravity()}
+            title="Copia regras visuais + roteiro completo + timestamps decupados para colar no chat"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-purple-500/15 border border-purple-500/40 hover:bg-purple-500/25 text-purple-200 text-xs font-semibold transition cursor-pointer"
+          >
+            {copiadoPacote ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                Copiado p/ Antigravity!
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5" />
+                Copiar Prompt p/ Antigravity
+              </>
+            )}
           </button>
 
           <button
@@ -434,6 +502,35 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                 </button>
               )}
             </div>
+          </div>
+
+          {/* Campo simples para colar prompts gerados no chat e salvar no prompts_imagens.txt */}
+          <div className="bg-[#0e1117] border border-slate-800 rounded-lg p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-slate-300">
+                Colar prompts gerados e salvar em <code>prompts_imagens.txt</code>
+              </span>
+              <button
+                type="button"
+                disabled={salvandoColados || !promptsColados.trim()}
+                onClick={() => void salvarPromptsColados()}
+                className="px-3 py-1 rounded bg-[#ffc928] hover:bg-[#ffd452] disabled:opacity-45 text-black font-semibold text-xs cursor-pointer flex items-center gap-1.5"
+              >
+                {salvandoColados ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Save className="w-3 h-3" />
+                )}
+                Salvar em prompts_imagens.txt
+              </button>
+            </div>
+            <textarea
+              value={promptsColados}
+              onChange={(e) => setPromptsColados(e.target.value)}
+              rows={3}
+              placeholder="Cole aqui os prompts [MM:SS] ... gerados no chat para salvar no projeto e atualizar prompts_imagens.txt..."
+              className="w-full bg-[#12151d] border border-slate-800 focus:border-[#ffc928] rounded-lg p-2.5 text-xs font-mono text-slate-200 outline-none resize-y"
+            />
           </div>
           {promptsExtraidos.length === 0 ? (
             <pre className="max-h-56 overflow-y-auto text-xs text-slate-300 whitespace-pre-wrap bg-[#0e1117] p-3 rounded-lg border border-slate-800">

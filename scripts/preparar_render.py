@@ -45,16 +45,135 @@ def atualizar_index_html(template_dir: Path, cenas_data: dict, nome_audio: str):
     index_path.write_text(html, encoding="utf-8")
 
 
+def _escolher_cor_bloco(texto: str, idx: int) -> str:
+    low = texto.lower()
+    if "!" in texto or any(
+        k in low for k in ("não", "nao", "nunca", "problema", "ansioso", "estressado", "crise", "erro", "pior", "zero")
+    ):
+        return "alerta"
+    if "?" in texto or any(ch.isdigit() for ch in texto) or idx % 3 == 1:
+        return "canal"
+    return "branco"
+
+
+def _garantir_legendas_cenas(cenas_data: dict, pasta_projeto: Path | None = None):
+    """
+    Garante micro-legendas dinâmicas de 1 a 3 palavras (0.4s a 0.9s) sincronizadas
+    com o áudio real (03-timestamps.json quando disponível), sem coordenadas x/y.
+    """
+    palavras_ts: list[dict] = []
+    if pasta_projeto:
+        ts_path = pasta_projeto / "03-timestamps.json"
+        if ts_path.exists():
+            try:
+                ts_data = json.loads(ts_path.read_text(encoding="utf-8"))
+                for seg in ts_data.get("segmentos", []):
+                    for w in seg.get("palavras", []):
+                        txt = str(w.get("palavra", "")).strip()
+                        if txt:
+                            palavras_ts.append(
+                                {
+                                    "palavra": txt,
+                                    "inicio": float(w.get("inicio", 0.0)),
+                                    "fim": float(w.get("fim", 0.0)),
+                                }
+                            )
+            except Exception:
+                palavras_ts = []
+
+    for cena in cenas_data.get("cenas", []):
+        cena.pop("x", None)
+        cena.pop("y", None)
+
+        inicio = float(cena.get("inicio", 0.0))
+        fim = float(cena.get("fim", inicio + 1.5))
+
+        # Se já existem micro-legendas válidas (<= 3 palavras cada), apenas garante cor
+        if cena.get("legendas") and all(len(str(l.get("texto", "")).split()) <= 3 for l in cena["legendas"]):
+            for idx, l in enumerate(cena["legendas"]):
+                if not l.get("cor"):
+                    l["cor"] = _escolher_cor_bloco(str(l.get("texto", "")), idx)
+            continue
+
+        # Tenta puxar palavras exatas do Whisper dentro do intervalo [inicio, fim]
+        palavras_cena = [
+            w for w in palavras_ts
+            if (w["inicio"] + w["fim"]) / 2.0 >= inicio - 0.08 and (w["inicio"] + w["fim"]) / 2.0 <= fim + 0.08
+        ]
+
+        if palavras_cena:
+            grupos_ts: list[list[dict]] = []
+            grupo: list[dict] = []
+            for idx, w in enumerate(palavras_cena):
+                grupo.append(w)
+                dur = float(w["fim"]) - float(grupo[0]["inicio"])
+                pont = str(w["palavra"]).endswith((",", ".", "?", "!", ";", ":"))
+                if idx == len(palavras_cena) - 1 or len(grupo) >= 3 or (dur >= 0.45 and (pont or len(grupo) >= 2)) or dur >= 0.85:
+                    grupos_ts.append(grupo)
+                    grupo = []
+
+            legendas = []
+            for idx, g in enumerate(grupos_ts):
+                b_ini = inicio if idx == 0 else legendas[-1]["fim"]
+                if idx == len(grupos_ts) - 1:
+                    b_fim = round(fim, 2)
+                else:
+                    prox_ini = float(grupos_ts[idx + 1][0]["inicio"])
+                    b_fim = round(max(b_ini + 0.25, min(fim - 0.15, (float(g[-1]["fim"]) + prox_ini) / 2.0)), 2)
+                txt = " ".join(str(x["palavra"]) for x in g).strip()
+                if txt:
+                    legendas.append(
+                        {
+                            "texto": txt,
+                            "inicio": round(b_ini, 2),
+                            "fim": max(round(b_ini + 0.2, 2), b_fim),
+                            "cor": _escolher_cor_bloco(txt, idx),
+                        }
+                    )
+            if legendas:
+                legendas[-1]["fim"] = round(fim, 2)
+                cena["legendas"] = legendas
+                continue
+
+        fala = str(cena.get("narracao") or cena.get("texto") or "").strip()
+        if not fala:
+            continue
+
+        palavras = fala.split()
+        dur = max(0.25, fim - inicio)
+        max_p = 3 if dur >= 1.2 else 2
+        grupos = [palavras[i : i + max_p] for i in range(0, len(palavras), max_p)]
+
+        legendas = []
+        cursor = inicio
+        for idx, g in enumerate(grupos):
+            b_fim = round(fim, 2) if idx == len(grupos) - 1 else round(cursor + dur * (len(g) / len(palavras)), 2)
+            txt = " ".join(g)
+            legendas.append(
+                {
+                    "texto": txt,
+                    "inicio": round(cursor, 2),
+                    "fim": max(round(cursor + 0.2, 2), b_fim),
+                    "cor": _escolher_cor_bloco(txt, idx),
+                }
+            )
+            cursor = b_fim
+        cena["legendas"] = legendas
+
+
 def preparar(pasta_projeto: Path, template_dir: Path):
     assets_atual = template_dir / "assets_atual"
     if assets_atual.exists():
         shutil.rmtree(assets_atual)
     assets_atual.mkdir(parents=True)
 
-    # Copia cenas.json para a raiz do template
+    # Carrega cenas.json, garante micro-legendas sincronizadas e grava no template
     cenas_origem_json = pasta_projeto / "cenas.json"
-    shutil.copy2(cenas_origem_json, template_dir / "cenas.json")
     cenas_data = json.loads(cenas_origem_json.read_text(encoding="utf-8"))
+    _garantir_legendas_cenas(cenas_data, pasta_projeto)
+    (template_dir / "cenas.json").write_text(
+        json.dumps(cenas_data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     # Copia audio.wav ou audio.mp3
     midia_dir = pasta_projeto / "midia"

@@ -4,12 +4,12 @@ description: Lê o arquivo de timestamps do Whisper e monta os prompts visuais s
 
 # Sincronização de Áudio com Storyboard
 
-1. Localize a pasta mais recente em `projetos/` que contenha o arquivo `03-timestamps.json` (ou o arquivo indicado por mim).
-2. Leia os intervalos de fala frase por frase e quebre trechos longos em blocos visuais de 1,5 a 2 segundos para manter a retenção alta.
-3. Verifique se é um vídeo longo (`16:9`) ou Short (`9:16`).
-4. Gere a lista completa de cenas no formato `[MM:SS] Prompt em inglês` seguindo `.agent/rules/02-identidade-visual-e-prompts.md`, salvando o resultado em `04-storyboard-e-prompts.md` dentro da mesma pasta do projeto.
-5. **Substitua o arquivo `prompts_imagens.txt` na raiz do repositório** com todos os prompts `[MM:SS] ...` gerados para este projeto (um por bloco, separados por linha em branco).
-6. Se existir um arquivo `cenas.json` de template na pasta `template-hyperframes/`, gere também uma cópia preenchida na pasta do projeto com os tempos de entrada, saída e sugestões de animação (`zoom-in`, `shake`, `slide-up`, `cut`).
+1. Localize a pasta do projeto ativo em `projetos/` que contenha `03-timestamps.json` e o roteiro completo (`02-narracao.txt`).
+2. Leia o roteiro completo e os intervalos de fala decupados, mantendo cortes dinâmicos a cada **1,5 a 3 segundos** no máximo (25 a 35 cenas por minuto), com timestamps `[MM:SS]` únicos e estritamente crescentes (nunca repita o mesmo segundo em duas linhas).
+3. Verifique se é um Short (`9:16`) ou um vídeo longo (`16:9`).
+4. Para cada corte, crie uma cena/ação específica em **INGLÊS** fiel à fala exata daquele momento no roteiro (sem poses genéricas ou repetidas em sequência; textos dentro da imagem em **PORTUGUÊS DO BRASIL**), em fundo branco sólido puro (`#FFFFFF`), e concatene a descrição completa do protagonista + estilo em **todas as linhas** seguindo `.agent/rules/02-identidade-visual-e-prompts.md`.
+5. Salve o resultado no formato `[MM:SS] Prompt em inglês` em `04-storyboard-e-prompts.md` dentro da pasta do projeto.
+6. **Substitua o arquivo `prompts_imagens.txt` na raiz do repositório** com todos os prompts `[MM:SS] ...` gerados para este projeto (um por bloco, separados por linha em branco).
 7. Gere o arquivo `cenas.json` na pasta do projeto seguindo a estrutura do `template-hyperframes/cenas.json`:
    - Use `"formato": "9:16"` para Shorts ou `"16:9"` para vídeos longos.
    - Aponte `"audio"` para `"assets_atual/audio.wav"` e cada `"arquivo"` para `"assets_atual/cenas/cena_01.png"` (em sequência).

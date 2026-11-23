@@ -110,6 +110,22 @@ export const api = {
       { method: "POST" }
     ),
 
+  obterPacoteChat: (nome: string, tipo?: ProjetoTipo) =>
+    request<{
+      ok: boolean;
+      projeto: string;
+      tipo: ProjetoTipo;
+      formato: "16:9" | "9:16";
+      duracao_total: number;
+      qtd_cortes: number;
+      origem: "timestamps" | "narracao";
+      pacote: string;
+    }>(
+      `/api/projetos/${encodeURIComponent(nome)}/pacote-chat${
+        tipo ? `?tipo=${tipo}` : ""
+      }`
+    ),
+
   lerTimestamps: (nome: string) =>
     request<{ existe: boolean; dados: TimestampsData | null }>(
       `/api/projetos/${encodeURIComponent(nome)}/timestamps`

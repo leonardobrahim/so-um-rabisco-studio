@@ -16,6 +16,7 @@ from backend.pipeline import (
     gerar_storyboard_automatico,
     inferir_tipo_projeto,
     ler_ou_criar_meta_projeto,
+    montar_pacote_chat,
     salvar_meta_projeto,
 )
 
@@ -290,7 +291,7 @@ def ler_storyboard(nome: str) -> dict[str, Any]:
 
 def _sincronizar_prompts_imagens(conteudo_storyboard: str) -> int:
     prompts = [
-        linha.strip()
+        re.sub(r"^\[\d{2}:\d{2}\]\s*", "", linha.strip())
         for linha in conteudo_storyboard.splitlines()
         if re.match(r"^\[\d{2}:\d{2}\]", linha.strip())
     ]
@@ -351,6 +352,15 @@ def gerar_storyboard_endpoint(nome: str, tipo: str | None = None) -> dict[str, A
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return resultado
+
+
+@app.get("/api/projetos/{nome}/pacote-chat")
+def obter_pacote_chat(nome: str, tipo: str | None = None) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    try:
+        return montar_pacote_chat(pasta, tipo_forcado=tipo)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/projetos/{nome}/cenas")

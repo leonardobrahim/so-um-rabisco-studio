@@ -1,337 +1,230 @@
 {
-  "projeto": "2026-11-short-novo",
+  "projeto": "2026-11-teste",
   "formato": "9:16",
   "fps": 30,
-  "duracao_total": 61.97,
+  "duracao_total": 14.6,
   "audio": "assets_atual/audio.wav",
   "cenas": [
     {
       "arquivo": "assets_atual/cenas/cena_01.png",
-      "inicio": 0,
-      "fim": 2.02,
-      "efeito": "zoom-in",
-      "texto": "PRECISA TRÊS",
-      "escala": 1
+      "inicio": 0.0,
+      "fim": 1.84,
+      "efeito": "pop-in",
+      "texto": "Você abre o celular às 11 da",
+      "narracao": "Você abre o celular às 11 da",
+      "legendas": [
+        {
+          "texto": "Você abre",
+          "inicio": 0.0,
+          "fim": 0.68,
+          "cor": "branco"
+        },
+        {
+          "texto": "o celular",
+          "inicio": 0.68,
+          "fim": 1.14,
+          "cor": "canal"
+        },
+        {
+          "texto": "às 11",
+          "inicio": 1.14,
+          "fim": 1.6,
+          "cor": "canal"
+        },
+        {
+          "texto": "da",
+          "inicio": 1.6,
+          "fim": 1.84,
+          "cor": "branco"
+        }
+      ],
+      "escala": 1.0
     },
     {
       "arquivo": "assets_atual/cenas/cena_02.png",
-      "inicio": 2.02,
-      "fim": 4.14,
-      "efeito": "zoom-in",
-      "texto": "",
-      "escala": 1
+      "inicio": 1.84,
+      "fim": 4.12,
+      "efeito": "zoom-out",
+      "texto": "noite só para ver uma mensagem rápida.",
+      "narracao": "noite só para ver uma mensagem rápida.",
+      "legendas": [
+        {
+          "texto": "noite só",
+          "inicio": 1.84,
+          "fim": 2.42,
+          "cor": "branco"
+        },
+        {
+          "texto": "para ver uma",
+          "inicio": 2.42,
+          "fim": 2.92,
+          "cor": "canal"
+        },
+        {
+          "texto": "mensagem rápida.",
+          "inicio": 2.92,
+          "fim": 4.12,
+          "cor": "branco"
+        }
+      ],
+      "escala": 1.0
     },
     {
       "arquivo": "assets_atual/cenas/cena_03.png",
-      "inicio": 4.14,
-      "fim": 5.06,
-      "efeito": "zoom-out",
-      "texto": "",
-      "escala": 1
+      "inicio": 4.12,
+      "fim": 6.16,
+      "efeito": "zoom-in",
+      "texto": "Quando olha para o relógio de novo, já são",
+      "narracao": "Quando olha para o relógio de novo, já são",
+      "legendas": [
+        {
+          "texto": "Quando olha",
+          "inicio": 4.12,
+          "fim": 4.68,
+          "cor": "branco"
+        },
+        {
+          "texto": "para o relógio",
+          "inicio": 4.68,
+          "fim": 5.24,
+          "cor": "canal"
+        },
+        {
+          "texto": "de novo, já",
+          "inicio": 5.24,
+          "fim": 5.96,
+          "cor": "branco"
+        },
+        {
+          "texto": "são",
+          "inicio": 5.96,
+          "fim": 6.16,
+          "cor": "branco"
+        }
+      ],
+      "escala": 1.0
     },
     {
       "arquivo": "assets_atual/cenas/cena_04.png",
-      "inicio": 5.06,
-      "fim": 6.9,
-      "efeito": "zoom-out",
-      "texto": "CONSEGUE RESOLVER",
-      "escala": 1
+      "inicio": 6.16,
+      "fim": 8.28,
+      "efeito": "zoom-in",
+      "texto": "duas da manhã e você está assistindo",
+      "narracao": "duas da manhã e você está assistindo",
+      "legendas": [
+        {
+          "texto": "duas da",
+          "inicio": 6.16,
+          "fim": 6.74,
+          "cor": "branco"
+        },
+        {
+          "texto": "manhã e",
+          "inicio": 6.74,
+          "fim": 7.4,
+          "cor": "canal"
+        },
+        {
+          "texto": "você está assistindo",
+          "inicio": 7.4,
+          "fim": 8.28,
+          "cor": "branco"
+        }
+      ],
+      "escala": 1.0
     },
     {
       "arquivo": "assets_atual/cenas/cena_05.png",
-      "inicio": 6.9,
-      "fim": 8.4,
-      "efeito": "pop-in",
-      "texto": "SIMPLES VOU",
-      "escala": 1
+      "inicio": 8.28,
+      "fim": 10.2,
+      "efeito": "zoom-in",
+      "texto": "um vídeo de alguém limpando um tapete",
+      "narracao": "um vídeo de alguém limpando um tapete",
+      "legendas": [
+        {
+          "texto": "um vídeo",
+          "inicio": 8.28,
+          "fim": 8.74,
+          "cor": "branco"
+        },
+        {
+          "texto": "de alguém limpando",
+          "inicio": 8.74,
+          "fim": 9.64,
+          "cor": "canal"
+        },
+        {
+          "texto": "um tapete",
+          "inicio": 9.64,
+          "fim": 10.2,
+          "cor": "branco"
+        }
+      ],
+      "escala": 1.0
     },
     {
       "arquivo": "assets_atual/cenas/cena_06.png",
-      "inicio": 8.4,
-      "fim": 10.36,
-      "efeito": "pop-in",
-      "texto": "APARENTEMENTE SUCESSO",
-      "escala": 1
+      "inicio": 10.2,
+      "fim": 12.12,
+      "efeito": "slide-up",
+      "texto": "encardido. O algoritmo não",
+      "narracao": "encardido. O algoritmo não",
+      "legendas": [
+        {
+          "texto": "encardido.",
+          "inicio": 10.2,
+          "fim": 11.03,
+          "cor": "branco"
+        },
+        {
+          "texto": "O algoritmo",
+          "inicio": 11.03,
+          "fim": 11.96,
+          "cor": "canal"
+        },
+        {
+          "texto": "não",
+          "inicio": 11.96,
+          "fim": 12.12,
+          "cor": "alerta"
+        }
+      ],
+      "escala": 1.0
     },
     {
       "arquivo": "assets_atual/cenas/cena_07.png",
-      "inicio": 10.36,
-      "fim": 11.78,
+      "inicio": 12.12,
+      "fim": 14.6,
       "efeito": "zoom-out",
-      "texto": "PRECISA ACORDAR",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_08.png",
-      "inicio": 11.78,
-      "fim": 13.68,
-      "efeito": "cut",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_09.png",
-      "inicio": 13.68,
-      "fim": 15.48,
-      "efeito": "cut",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_10.png",
-      "inicio": 15.48,
-      "fim": 17.26,
-      "efeito": "zoom-in",
-      "texto": "ENQUANTO ACORDA",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_11.png",
-      "inicio": 17.26,
-      "fim": 19.06,
-      "efeito": "slide-up",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_12.png",
-      "inicio": 19.06,
-      "fim": 19.62,
-      "efeito": "zoom-in",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_13.png",
-      "inicio": 19.62,
-      "fim": 21.28,
-      "efeito": "zoom-out",
-      "texto": "ACORDAR CEDO",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_14.png",
-      "inicio": 21.28,
-      "fim": 21.9,
-      "efeito": "zoom-in",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_15.png",
-      "inicio": 21.9,
-      "fim": 23.84,
-      "efeito": "zoom-in",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_16.png",
-      "inicio": 23.84,
-      "fim": 24.52,
-      "efeito": "zoom-out",
-      "texto": "PARA ACORDAR",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_17.png",
-      "inicio": 24.52,
-      "fim": 26.32,
-      "efeito": "zoom-in",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_18.png",
-      "inicio": 26.32,
-      "fim": 27.8,
-      "efeito": "zoom-in",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_19.png",
-      "inicio": 27.8,
-      "fim": 29.54,
-      "efeito": "zoom-in",
-      "texto": "CORPO SABE",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_20.png",
-      "inicio": 29.54,
-      "fim": 31.4,
-      "efeito": "zoom-in",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_21.png",
-      "inicio": 31.4,
-      "fim": 32.28,
-      "efeito": "zoom-out",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_22.png",
-      "inicio": 32.28,
-      "fim": 33.94,
-      "efeito": "zoom-out",
-      "texto": "PODE CAMINHAR",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_23.png",
-      "inicio": 33.94,
-      "fim": 35.64,
-      "efeito": "pop-in",
-      "texto": "SIMPLESMENTE TOMAR",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_24.png",
-      "inicio": 35.64,
-      "fim": 37.02,
-      "efeito": "zoom-in",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_25.png",
-      "inicio": 37.02,
-      "fim": 37.92,
-      "efeito": "pop-in",
-      "texto": "JÁ AJUDA",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_26.png",
-      "inicio": 37.92,
-      "fim": 40.08,
-      "efeito": "zoom-out",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_27.png",
-      "inicio": 40.08,
-      "fim": 41.2,
-      "efeito": "cut",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_28.png",
-      "inicio": 41.2,
-      "fim": 41.88,
-      "efeito": "pop-in",
-      "texto": "LARGA CELULAR",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_29.png",
-      "inicio": 41.88,
-      "fim": 43.56,
-      "efeito": "slide-up",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_30.png",
-      "inicio": 43.56,
-      "fim": 45.48,
-      "efeito": "pop-in",
-      "texto": "REFORMAS CASAS",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_31.png",
-      "inicio": 45.48,
-      "fim": 46.62,
-      "efeito": "pop-in",
-      "texto": "DUAS MANHÃ",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_32.png",
-      "inicio": 46.62,
-      "fim": 48.38,
-      "efeito": "zoom-in",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_33.png",
-      "inicio": 48.38,
-      "fim": 48.73,
-      "efeito": "cut",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_34.png",
-      "inicio": 48.73,
-      "fim": 50.72,
-      "efeito": "zoom-out",
-      "texto": "LEMBRA PRECISA",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_35.png",
-      "inicio": 50.72,
-      "fim": 52.94,
-      "efeito": "zoom-out",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_36.png",
-      "inicio": 52.94,
-      "fim": 54.78,
-      "efeito": "zoom-in",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_37.png",
-      "inicio": 54.78,
-      "fim": 56.04,
-      "efeito": "zoom-in",
-      "texto": "SETE HORAS",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_38.png",
-      "inicio": 56.04,
-      "fim": 57.7,
-      "efeito": "zoom-out",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_39.png",
-      "inicio": 57.7,
-      "fim": 59.26,
-      "efeito": "cut",
-      "texto": "",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_40.png",
-      "inicio": 59.26,
-      "fim": 61.2,
-      "efeito": "zoom-out",
-      "texto": "PRECISA PARAR",
-      "escala": 1
-    },
-    {
-      "arquivo": "assets_atual/cenas/cena_41.png",
-      "inicio": 61.2,
-      "fim": 61.97,
-      "efeito": "slide-up",
-      "texto": "",
-      "escala": 1
+      "texto": "quer o seu bem, ele só quer o seu sono.",
+      "narracao": "quer o seu bem, ele só quer o seu sono.",
+      "legendas": [
+        {
+          "texto": "quer o seu",
+          "inicio": 12.12,
+          "fim": 12.62,
+          "cor": "branco"
+        },
+        {
+          "texto": "bem, ele",
+          "inicio": 12.62,
+          "fim": 13.16,
+          "cor": "canal"
+        },
+        {
+          "texto": "só quer o",
+          "inicio": 13.16,
+          "fim": 13.62,
+          "cor": "branco"
+        },
+        {
+          "texto": "seu sono.",
+          "inicio": 13.62,
+          "fim": 14.6,
+          "cor": "branco"
+        }
+      ],
+      "escala": 1.0
     }
   ]
 }
