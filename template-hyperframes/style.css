@@ -43,7 +43,8 @@ body {
     z-index: 15;
 }
 
-.cena-item {
+.cena-item,
+.cena-fundo {
     position: absolute;
     inset: 0;
     width: 100%;
@@ -57,7 +58,9 @@ body {
     will-change: transform, opacity;
 }
 
-.cena-item img {
+/* Só filhos diretos: a imagem do personagem (dentro de .cena-personagem) não herda estas regras */
+.cena-item > img,
+.cena-fundo > img {
     max-width: 84%;
     max-height: 70%;
     object-fit: contain;
@@ -66,12 +69,55 @@ body {
 }
 
 /* Vídeos longos (16:9) usam fundo ilustrado completo em tela cheia (full-bleed) */
-#composition.formato-horizontal .cena-item img {
+#composition.formato-horizontal .cena-item > img,
+#composition.formato-horizontal .cena-fundo > img {
     width: 100%;
     height: 100%;
     max-width: none;
     max-height: none;
     object-fit: cover;
+}
+
+/* Shorts em camadas: o objeto sobe para liberar a base do quadro ao personagem */
+#composition:not(.formato-horizontal) .cena-fundo {
+    align-items: flex-start;
+    padding-top: 7%;
+}
+
+#composition:not(.formato-horizontal) .cena-fundo > img {
+    max-height: 56%;
+}
+
+/* Camada do personagem (pose PNG transparente ou sprite sheet com steps() no GSAP) */
+.cena-personagem {
+    position: absolute;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform-origin: 50% 100%;
+    will-change: transform, opacity;
+}
+
+.cena-personagem img,
+.personagem-inner,
+.personagem-sprite {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.cena-personagem img {
+    object-fit: contain;
+    user-select: none;
+}
+
+.personagem-inner.flip {
+    transform: scaleX(-1);
+}
+
+.personagem-sprite {
+    background-repeat: repeat-x;
+    background-position: 0 0;
 }
 
 /* Vinheta ultra-suave nas bordas para dar profundidade ao cenário 16:9 */

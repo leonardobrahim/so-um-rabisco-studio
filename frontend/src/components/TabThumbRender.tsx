@@ -311,7 +311,7 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
                 {isShort ? "1080×1920 • 9:16 Short" : "1920×1080 • 16:9 Longo"})
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Copia <code>cenas.json</code>, áudio e PNGs recortados para{" "}
+                Copia <code>cenas.json</code>, áudio, fundos e poses/sprites usados para{" "}
                 <code>template-hyperframes/</code> via{" "}
                 <code>scripts/preparar_render.py</code>.
               </p>

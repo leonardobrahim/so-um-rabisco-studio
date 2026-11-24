@@ -10,5 +10,5 @@ description: Cria um Short/Reel/TikTok completo com gancho forte e ritmo rápido
    - Escalada rápida e virada/insight claro.
    - Fechamento curto que conecte de volta à primeira frase para incentivar loop.
    - Entregue apenas o texto limpo da narração e aguarde minha aprovação.
-3. Após aprovação, crie a pasta `projetos/AAAA-MM-short-slug/`, salve `02-narracao.txt` e gere `04-storyboard-e-prompts.md` com cortes rápidos a cada 1 a 2 segundos (`9:16`, prompts em inglês, fundo branco sólido `#FFFFFF`). Substitua também o arquivo `prompts_imagens.txt` na raiz do repositório com todos os prompts `[MM:SS] ...` gerados para este projeto (separados por linha em branco).
+3. Após aprovação, crie a pasta `projetos/AAAA-MM-short-slug/`, salve `02-narracao.txt` e gere `04-storyboard-e-prompts.md` com cortes rápidos a cada 1 a 2 segundos (`9:16`, prompts em inglês, apenas um objeto/ícone em destaque sobre fundo branco sólido `#FFFFFF`, sem pessoas; o personagem entra depois em camada). Substitua também o arquivo `prompts_imagens.txt` na raiz do repositório com todos os prompts `[MM:SS] ...` gerados para este projeto (separados por linha em branco).
 4. Finalize gerando legendas e hashtags separadas em blocos de código individuais para YouTube Shorts, TikTok e Instagram Reels em `05-seo-e-thumb.md`.

@@ -4,6 +4,11 @@ import shutil
 import sys
 from pathlib import Path
 
+RAIZ_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(RAIZ_DIR))
+
+from backend.personagem import FONTE_PADRAO, listar_biblioteca, resolver_asset  # noqa: E402
+
 
 def encontrar_projeto_pronto(base_dir: Path) -> Path:
     projetos_dir = base_dir / "projetos"
@@ -170,6 +175,45 @@ def _garantir_legendas_cenas(cenas_data: dict, pasta_projeto: Path | None = None
         cena["legendas"] = legendas
 
 
+def _preparar_personagens(cenas_data: dict, assets_atual: Path) -> list[str]:
+    """Copia só os PNGs de personagem usados para assets_atual/personagem/ e resolve o 'arquivo' de cada cena.
+
+    Cenas sem 'personagem' (projetos antigos) ou com tipo 'none' passam intactas: renderizam só o fundo.
+    """
+    avisos: list[str] = []
+    biblioteca = {(a["fonte"], a["id"]): a for a in listar_biblioteca()["assets"]}
+
+    for numero, cena in enumerate(cenas_data.get("cenas", []), start=1):
+        personagem = cena.get("personagem")
+        if not isinstance(personagem, dict) or personagem.get("tipo") not in ("pose", "sprite"):
+            continue
+
+        fonte = str(personagem.get("fonte") or FONTE_PADRAO)
+        asset = str(personagem.get("asset") or "")
+        origem = resolver_asset(fonte, asset)
+        if origem is None:
+            avisos.append(f"Cena {numero}: asset de personagem '{asset}' não encontrado; renderizando só o fundo.")
+            personagem["tipo"] = "none"
+            personagem.pop("arquivo", None)
+            continue
+
+        destino = assets_atual / "personagem" / fonte / asset
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        if not destino.exists():
+            shutil.copy2(origem, destino)
+        personagem["arquivo"] = f"assets_atual/personagem/{fonte}/{asset}"
+
+        if personagem["tipo"] == "sprite":
+            info = biblioteca.get((fonte, asset), {})
+            sprite = personagem.get("sprite") if isinstance(personagem.get("sprite"), dict) else {}
+            sprite["frames"] = int(sprite.get("frames") or info.get("frames") or 1)
+            sprite["quadro"] = int(sprite.get("quadro") or info.get("quadro") or 512)
+            sprite["fps"] = int(sprite.get("fps") or info.get("fps") or 8)
+            personagem["sprite"] = sprite
+
+    return avisos
+
+
 def preparar(pasta_projeto: Path, template_dir: Path, com_legenda: bool | None = None):
     assets_atual = template_dir / "assets_atual"
     if assets_atual.exists():
@@ -186,6 +230,9 @@ def preparar(pasta_projeto: Path, template_dir: Path, com_legenda: bool | None =
 
     if cenas_data.get("mostrar_legendas", True):
         _garantir_legendas_cenas(cenas_data, pasta_projeto)
+    avisos_personagem = _preparar_personagens(cenas_data, assets_atual)
+    for aviso in avisos_personagem:
+        print(f"[AVISO] {aviso}")
     (template_dir / "cenas.json").write_text(
         json.dumps(cenas_data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -207,9 +254,15 @@ def preparar(pasta_projeto: Path, template_dir: Path, com_legenda: bool | None =
 
     atualizar_index_html(template_dir, cenas_data, nome_audio)
 
+    qtd_personagens = sum(
+        1
+        for c in cenas_data.get("cenas", [])
+        if isinstance(c.get("personagem"), dict) and c["personagem"].get("tipo") in ("pose", "sprite")
+    )
     print(
         f"Template pronto para renderizar o projeto: {pasta_projeto.name} "
-        f"({cenas_data.get('formato', '9:16')}, {cenas_data.get('duracao_total', 0)}s)"
+        f"({cenas_data.get('formato', '9:16')}, {cenas_data.get('duracao_total', 0)}s, "
+        f"{qtd_personagens} cena(s) com personagem em camada)"
     )
 
 

@@ -1,4 +1,5 @@
 import type {
+  BibliotecaPersonagem,
   CenasConfig,
   ProjetoMeta,
   ProjetoResumo,
@@ -95,6 +96,9 @@ export const api = {
       formato: "16:9" | "9:16";
       duracao_total: number;
       qtd_cenas: number;
+      geracao_ia?: "gemini" | "fallback_local";
+      modelo_ia?: string | null;
+      aviso_ia?: string | null;
       cenas: CenasConfig;
       storyboard: string;
     }>(
@@ -158,6 +162,66 @@ export const api = {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dados }),
+      }
+    ),
+
+  sugerirPersonagem: (
+    nome: string,
+    dados: CenasConfig,
+    apenasSemPersonagem = false
+  ) =>
+    request<{ ok: boolean; alteradas: number; dados: CenasConfig }>(
+      `/api/projetos/${encodeURIComponent(
+        nome
+      )}/cenas/sugerir-personagem?apenas_sem_personagem=${apenasSemPersonagem}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dados }),
+      }
+    ),
+
+  listarBibliotecaPersonagem: () =>
+    request<BibliotecaPersonagem>("/api/personagem/biblioteca"),
+
+  personagemArquivoUrl: (
+    assetOrPasta: string,
+    arquivo?: string,
+    fonte = "protagonista",
+    cacheBust?: number
+  ) => {
+    let pasta = assetOrPasta;
+    let nomeArquivo = arquivo ?? "";
+    if (!arquivo && assetOrPasta.includes("/")) {
+      const partes = assetOrPasta.split("/");
+      pasta = partes[0] || "";
+      nomeArquivo = partes[1] || "";
+    }
+    const qs = new URLSearchParams({ fonte });
+    if (cacheBust) qs.set("t", String(cacheBust));
+    return `${API_BASE}/api/personagem/arquivo/${encodeURIComponent(
+      pasta
+    )}/${encodeURIComponent(nomeArquivo)}?${qs.toString()}`;
+  },
+
+  atualizarBibliotecaPersonagem: (
+    pasta: string,
+    payload: {
+      modo?: "poses" | "sprite";
+      fps?: number;
+      tags_pasta?: string[];
+      tags?: Record<string, string[]>;
+    },
+    fonte = "protagonista"
+  ) =>
+    request<{ ok: boolean } & BibliotecaPersonagem>(
+      `/api/personagem/biblioteca/${encodeURIComponent(
+        pasta
+      )}?fonte=${encodeURIComponent(fonte)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       }
     ),
 

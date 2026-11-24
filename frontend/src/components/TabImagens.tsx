@@ -241,10 +241,10 @@ export function TabImagens({ projeto, onAtualizado, onIrParaAba }: Props) {
           />
           <ImagePlus className="w-8 h-8 text-[#ffc928]" />
           <div className="text-sm font-semibold text-slate-200">
-            Upload em lote de ilustrações {isShort ? "9:16" : "16:9"} (<code>midia/raw/</code>)
+            Upload em lote de fundos/objetos {isShort ? "9:16" : "16:9"} (<code>midia/raw/</code>)
           </div>
           <p className="text-xs text-slate-400">
-            Arraste todas as imagens na ordem das cenas ou clique para selecionar.
+            Arraste os fundos/objetos gerados sem personagem na ordem das cenas ou clique para selecionar.
           </p>
         </div>
 

@@ -8,28 +8,33 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from .personagem import ANIMACOES, POSICOES, SeletorPersonagem
+
+SCHEMA_VERSAO = 2
+
+# O prompt de imagem descreve APENAS o fundo/objeto: o personagem entra depois, em camada (PNG transparente).
+ESTILO_FUNDO_BASE = (
+    "empty scene, no people, no characters, minimalist 2d cartoon background, "
+    "thick black ink outlines, flat colors"
+)
+
 STYLE_SUFFIX_SHORT_TEMPLATE = (
-    "Featuring a minimalist 2D cartoon character with a large rounded pale-white head "
-    "(about 1/3 of total body height) with a slight light-blue shading area on the left side of the head, "
-    "messy spiky black hair, simple oval black eyes, expressive minimalist face with eyebrows and mouth, "
-    "compact small body wearing a vibrant yellow hoodie (#FFC928), dark navy blue pants, "
-    "and low white sneakers with black details. 2D minimalist cartoon illustration, "
-    "hand-drawn doodle and marker aesthetic, thick clean black outlines, flat colors, "
-    "slightly irregular lines, pure solid white background (#FFFFFF), no photorealism, "
+    "Single highlighted object or icon centered in the frame, "
+    + ESTILO_FUNDO_BASE
+    + ", hand-drawn doodle and marker aesthetic, slightly irregular lines, "
+    "pure solid white background (#FFFFFF), no hands, no body parts, no photorealism, "
     "no 3D, no heavy gradients, no realistic shadows, no excessive detail, {aspect} aspect ratio."
 )
 
 STYLE_SUFFIX_LONGO_TEMPLATE = (
-    "Featuring a minimalist 2D cartoon character with a large rounded pale-white head "
-    "(about 1/3 of total body height) with a slight light-blue shading area on the left side of the head, "
-    "messy spiky black hair, simple oval black eyes, expressive minimalist face with eyebrows and mouth, "
-    "compact small body wearing a vibrant yellow hoodie (#FFC928), dark navy blue pants, "
-    "and low white sneakers with black details. 2D minimalist cartoon illustration, "
-    "hand-drawn doodle and marker aesthetic, thick clean black outlines, flat colors, "
-    "slightly irregular lines, full illustrated background with soft muted pastel or desaturated colors, "
-    "subtle scenery and objects matching the scene, strictly avoid overly saturated or harsh bright primary "
-    "background colors (no loud neon blue, bright red, or harsh yellow walls/skies), no photorealism, "
-    "no 3D, no heavy gradients, no realistic shadows, no excessive detail, {aspect} aspect ratio."
+    ESTILO_FUNDO_BASE
+    + ", hand-drawn doodle and marker aesthetic, slightly irregular lines, "
+    "full illustrated background with soft muted pastel or desaturated colors, "
+    "subtle scenery and objects matching the scene, uncluttered lower foreground, "
+    "strictly avoid overly saturated or harsh bright primary background colors "
+    "(no loud neon blue, bright red, or harsh yellow walls/skies), no hands, no body parts, "
+    "no photorealism, no 3D, no heavy gradients, no realistic shadows, no excessive detail, "
+    "{aspect} aspect ratio."
 )
 
 
@@ -37,67 +42,74 @@ def _obter_sufixo_estilo(tipo: str, formato: str) -> str:
     template = STYLE_SUFFIX_SHORT_TEMPLATE if tipo == "short" else STYLE_SUFFIX_LONGO_TEMPLATE
     return template.format(aspect=formato)
 
-# Regras semânticas PT-BR -> ação visual em inglês + efeito preferido
-REGRAS_VISUAIS: list[tuple[tuple[str, ...], str, str]] = [
+# Regras semânticas PT-BR -> fundo/objeto em inglês (SEM pessoas) + efeito de câmera + tags de pose do personagem
+# Usado apenas como fallback local quando não há Gemini API; usa match por palavra inteira e bloqueio global.
+REGRAS_VISUAIS: list[tuple[tuple[str, ...], str, str, tuple[str, ...]]] = [
     (
         ("ansioso", "ansiedade", "estressado", "estresse", "panico", "surto", "desespero", "nervoso", "medo"),
-        "The protagonist holding his head with both hands, wide panicked eyes, jagged red stress scribbles exploding around his head",
+        "Jagged dark stress scribbles and tiny lightning doodles scattered over a plain pastel wall",
         "shake",
+        ("ansioso", "panico", "medo"),
     ),
     (
-        ("celular", "telefone", "notificacao", "tela", "scroll", "rolando", "rede", "instagram", "tiktok", "aba", "mensagem"),
-        "The protagonist staring wide-eyed at a glowing smartphone screen in his hands while floating notification bubble doodles pop around him",
+        ("celular", "smartphone", "telefone", "notificacao", "notificacoes", "instagram", "tiktok", "mensagem"),
+        "A glowing smartphone floating in the center with notification bubble doodles popping around it",
         "pop-in",
+        ("celular", "surpreso", "olhando"),
     ),
     (
-        ("dinheiro", "salario", "conta", "boleto", "rico", "loteria", "pagar", "comprar", "gastar", "caro", "banco"),
-        "The protagonist staring at an empty wallet and floating coin doodles with an awkward sweating expression",
+        ("dinheiro", "salario", "boleto", "rico", "loteria", "pagar", "comprar", "gastar", "banco", "carteira"),
+        "An open empty wallet with floating coin doodles and a few cobwebs",
         "pop-in",
+        ("preocupado", "duvida", "dinheiro"),
     ),
     (
-        ("tempo", "mes", "meses", "semana", "dia", "terca", "segunda", "relogio", "hora", "horas", "ano", "calendario", "espera"),
-        "The protagonist staring at a wall calendar and a ticking clock doodle floating above his head",
+        ("relogio", "calendario", "semana", "mes", "meses", "cronometro"),
+        "A minimalist wall calendar and a big ticking clock doodle with floating motion lines",
         "zoom-in",
+        ("olhando", "pensativo", "relogio"),
     ),
     (
-        ("trabalho", "emprego", "chefe", "reuniao", "escritorio", "pc", "computador", "tarefa", "meta", "produtivo"),
-        "The protagonist sitting slumped at a minimalist desk in front of a laptop surrounded by tall stacks of paper",
+        ("trabalho", "emprego", "chefe", "reuniao", "escritorio", "computador", "notebook", "tarefa", "meta", "produtivo"),
+        "A minimalist desk with an open laptop and tall stacks of paper piled around it",
         "slide-up",
+        ("cansado", "trabalho", "sentado"),
     ),
     (
-        ("prova", "estudar", "estudo", "livro", "ler", "aprender", "nota", "faculdade", "escola"),
-        "The protagonist sweating nervously while holding a pencil over a pile of exam papers and books",
+        ("prova", "estudar", "estudo", "livro", "livros", "faculdade", "escola"),
+        "A pile of exam papers, books and a pencil on a minimalist desk",
         "zoom-in",
+        ("nervoso", "estudando", "suor"),
     ),
     (
-        ("cerebro", "cabeca", "mente", "pensando", "pensar", "dopamina", "evolucao", "ancestral", "habito", "vicio"),
-        "The protagonist tapping his chin thoughtfully while a glowing cartoon brain doodle with lightning sparks floats above his head",
+        ("cerebro", "mente", "dopamina", "evolucao", "ancestral", "habito", "vicio"),
+        "A glowing cartoon brain doodle with lightning sparks floating over a plain pastel wall",
         "pop-in",
+        ("pensativo", "ideia", "duvida"),
     ),
     (
-        ("feliz", "alegria", "conseguiu", "vitoria", "trofeu", "sucesso", "paraiso", "comemorar", "sorrir"),
-        "The protagonist celebrating with both arms raised in the air and tiny confetti and star doodles around him, huge joyful grin",
+        ("feliz", "alegria", "conseguiu", "vitoria", "trofeu", "sucesso", "comemorar", "sorrir"),
+        "Confetti, stars and a golden trophy doodle on a plain pastel wall",
         "pop-in",
+        ("feliz", "comemorando", "animado"),
     ),
     (
-        ("dormir", "sono", "cansado", "exausto", "descansar", "cama", "noite", "madrugada", "acordar"),
-        "The protagonist lying exhausted face-down with heavy dark circles under his eyes and floating Zzz doodles",
+        ("dormir", "sono", "cansado", "exausto", "descansar", "cama", "travesseiro", "madrugada", "acordar"),
+        "A minimalist bed with a crumpled blanket and floating Zzz doodles under a crescent moon",
         "zoom-out",
+        ("cansado", "dormindo", "exausto"),
     ),
     (
-        ("espelho", "voce", "si mesmo", "culpa", "comparar", "outro", "pessoas", "ninguem"),
-        "The protagonist standing in front of a minimalist standing mirror, pointing awkwardly at his own reflection",
+        ("espelho", "reflexo"),
+        "A minimalist standing mirror in an otherwise empty room",
         "zoom-in",
+        ("apontando", "olhando", "duvida"),
     ),
     (
-        ("procrastinar", "depois", "amanha", "preguica", "enrolar", "sofá", "sofa"),
-        "The protagonist lounging lazily upside down while ignoring a floating alarm clock ringing loudly nearby",
+        ("procrastinar", "procrastinacao", "preguica", "sofa", "despertador"),
+        "A cozy sofa with a loudly ringing alarm clock doodle floating nearby",
         "slide-up",
-    ),
-    (
-        ("bia", "amiga", "namorada", "ela", "conversa"),
-        "The protagonist talking expressively with Bia (brown ponytail, green tank top, black leggings, holding a small notebook)",
-        "cut",
+        ("preguica", "deitado", "relaxado"),
     ),
 ]
 
@@ -298,56 +310,109 @@ def _gerar_blocos_legenda(
     return resultado
 
 
-def _escolher_acao_e_efeito(
+def _contem_palavra(texto_norm: str, termo: str) -> bool:
+    """Casamento por palavra inteira (evita falsos positivos como 'apagar' bater em 'pagar')."""
+    termo_norm = _normalizar_ascii(termo).strip()
+    if not termo_norm:
+        return False
+    return bool(re.search(r"\b" + re.escape(termo_norm) + r"\b", texto_norm))
+
+
+def _tags_pose_por_fala(fala: str) -> list[str]:
+    """Tags de emoção/pose desejadas para o personagem, derivadas da fala do corte."""
+    norm = _normalizar_ascii(fala)
+    for keywords, _fundo, _efeito, tags in REGRAS_VISUAIS:
+        if any(_contem_palavra(norm, k) for k in keywords):
+            return list(tags)
+    if "?" in fala:
+        return ["duvida", "confuso", "curioso"]
+    if "!" in fala:
+        return ["surpreso", "chocado", "animado"]
+    if any(_contem_palavra(norm, k) for k in ("nao", "nunca", "mas", "porem", "errado", "problema")):
+        return ["cetico", "negando", "bravo"]
+    return []
+
+
+_FUNDOS_NEUTROS_FALLBACK = [
+    "A plain soft pastel living room wall with a simple framed picture and floating thought doodles",
+    "A clean pastel minimalist room corner with a small wooden table and a simple lamp",
+    "An uncluttered soft sky-blue doodle backdrop with subtle clouds and floating comic lines",
+    "A cozy quiet room interior with soft pastel curtains and a window showing tiny stars",
+    "A minimal desk surface with a blank notebook and a floating question bubble doodle",
+    "An empty hallway with two closed doors and subtle perspective sketch lines",
+]
+
+
+def _escolher_fundo_efeito_tags(
     fala: str,
     indice: int,
-    acao_anterior: str = "",
-) -> tuple[str, str]:
+    fundos_usados: set[str] | None = None,
+) -> tuple[str, str, list[str]]:
     norm = _normalizar_ascii(fala)
-    for keywords, acao, efeito in REGRAS_VISUAIS:
-        if any(k in norm for k in keywords) and acao != acao_anterior:
-            return acao, efeito
+    usados = fundos_usados if fundos_usados is not None else set()
 
-    # Sem poses genéricas fixas: deriva a cena diretamente da fala exata do corte
-    palavras_chave = [
-        p for p in re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9-]+", fala)
-        if len(p) >= 3 and _normalizar_ascii(p) not in STOPWORDS_PT
-    ]
-    conceito = " ".join(palavras_chave[:4]) if palavras_chave else fala.strip()
+    for keywords, fundo, efeito, tags in REGRAS_VISUAIS:
+        if any(_contem_palavra(norm, k) for k in keywords) and fundo not in usados:
+            usados.add(fundo)
+            return fundo, efeito, list(tags)
 
+    base = _FUNDOS_NEUTROS_FALLBACK[(indice - 1) % len(_FUNDOS_NEUTROS_FALLBACK)]
     if "?" in fala:
-        acao = f"The protagonist reacting with puzzled raised eyebrows and a questioning expression while visualizing the idea of '{conceito}'"
+        fundo = f"{base}, with a bold hand-drawn question mark doodle floating in the upper area"
         efeito = "pop-in"
     elif "!" in fala:
-        acao = f"The protagonist reacting with wide shocked eyes and emphatic hand gestures illustrating '{conceito}'"
+        fundo = f"{base}, with sharp hand-drawn exclamation burst lines"
         efeito = "shake"
-    elif any(k in norm for k in ("nao", "nunca", "mas", "porém", "porem", "errado", "problema")):
-        acao = f"The protagonist shaking his head with a skeptical frown while contrasting the situation '{conceito}'"
+    elif any(_contem_palavra(norm, k) for k in ("nao", "nunca", "mas", "porem", "errado", "problema")):
+        fundo = f"{base}, with a subtle red hand-drawn X doodle floating on the side"
         efeito = "slide-up"
     else:
-        acao = f"The protagonist expressively acting out the moment '{conceito}' with clear body language and matching facial emotion"
-        efeito = "zoom-in" if indice % 2 == 1 else "cut"
+        fundo = base
+        efeito = "zoom-in" if indice % 2 == 1 else "zoom-out"
 
-    if acao == acao_anterior:
-        acao = f"{acao}, viewed from a slightly closer dynamic framing"
+    if fundo in usados:
+        fundo = f"{fundo}, scene angle {indice}"
+    usados.add(fundo)
+    return fundo, efeito, _tags_pose_por_fala(fala)
 
-    return acao, efeito
 
-
-def _obter_gemini_api_key(raiz: Path) -> str | None:
-    chave = os.environ.get("GEMINI_API_KEY", "").strip()
-    if chave:
-        return chave
+def _ler_env_valor(raiz: Path, chave_nome: str) -> str | None:
+    valor_env = os.environ.get(chave_nome, "").strip()
+    if valor_env:
+        return valor_env
 
     env_path = raiz / ".env"
     if env_path.exists():
         for linha in env_path.read_text(encoding="utf-8").splitlines():
             linha = linha.strip()
-            if linha.startswith("GEMINI_API_KEY="):
+            if not linha or linha.startswith("#"):
+                continue
+            if linha.startswith(f"{chave_nome}="):
                 valor = linha.split("=", 1)[1].strip().strip('"').strip("'")
                 if valor:
                     return valor
     return None
+
+
+def _obter_gemini_api_key(raiz: Path) -> str | None:
+    return _ler_env_valor(raiz, "GEMINI_API_KEY")
+
+
+GEMINI_MODELOS_PADRAO = [
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+]
+
+
+def _obter_gemini_modelos(raiz: Path) -> list[str]:
+    custom = _ler_env_valor(raiz, "GEMINI_MODEL")
+    if custom:
+        return [custom, *[m for m in GEMINI_MODELOS_PADRAO if m != custom]]
+    return list(GEMINI_MODELOS_PADRAO)
 
 
 def _carregar_regras_visuais(raiz: Path) -> str:
@@ -357,43 +422,89 @@ def _carregar_regras_visuais(raiz: Path) -> str:
     return ""
 
 
-def _gerar_acoes_via_gemini(
+def _frases_contexto_por_bloco(blocos: list[dict[str, Any]]) -> list[str]:
+    """Agrupa cortes quebrados na mesma sentença para dar contexto completo ao LLM."""
+    contextos: list[str] = [""] * len(blocos)
+    grupo_idxs: list[int] = []
+    textos_grupo: list[str] = []
+
+    for idx, b in enumerate(blocos):
+        txt = str(b.get("texto", "")).strip()
+        grupo_idxs.append(idx)
+        if txt:
+            textos_grupo.append(txt)
+        termina_frase = txt.endswith((".", "?", "!"))
+        if termina_frase or idx == len(blocos) - 1:
+            frase = " ".join(textos_grupo).strip()
+            for g_i in grupo_idxs:
+                contextos[g_i] = frase
+            grupo_idxs = []
+            textos_grupo = []
+    return contextos
+
+
+def _gerar_fundos_via_gemini(
     roteiro_completo: str,
     blocos: list[dict[str, Any]],
     formato: str,
     regras_visuais: str,
     api_key: str,
-) -> list[dict[str, str]] | None:
+    tags_disponiveis: list[str],
+    modelos: list[str] | None = None,
+) -> tuple[list[dict[str, Any]] | None, str | None, str | None]:
+    frases_ctx = _frases_contexto_por_bloco(blocos)
     lista_cortes = "\n".join(
-        f"{idx}. {_formatar_mm_ss(float(b['inicio']))} ({b['inicio']}s -> {b['fim']}s): \"{b['texto']}\""
+        f"{idx}. {_formatar_mm_ss(float(b['inicio']))} ({b['inicio']}s -> {b['fim']}s) | "
+        f"Fala do corte: \"{b['texto']}\" | Frase completa: \"{frases_ctx[idx - 1]}\""
         for idx, b in enumerate(blocos, start=1)
     )
 
-    instrucao_fundo = (
-        "- Fundo branco sólido (#FFFFFF), sem cenário complexo."
-        if formato == "9:16"
-        else "- Inclua cenário/ambiente/objetos/paisagem de fundo em 2D minimalista coerentes com a fala, usando cores suaves/pastel/dessaturadas (nunca use cores muito fortes ou saturadas no fundo)."
-    )
+    if formato == "9:16":
+        instrucao_fundo = (
+            "- Descreva UM único objeto/ícone concreto em destaque, centralizado, sobre fundo branco sólido (#FFFFFF), "
+            "sem cenário complexo."
+        )
+    else:
+        instrucao_fundo = (
+            "- Descreva um cenário/ambiente/objetos de fundo em 2D minimalista coerentes com a fala exata, usando cores "
+            "suaves/pastel/dessaturadas (nunca cores muito fortes ou saturadas) e deixando o terço inferior do quadro livre."
+        )
+
+    tags_txt = ", ".join(tags_disponiveis) if tags_disponiveis else "(nenhuma tag cadastrada)"
 
     prompt_sistema = (
         "Você é o diretor de storyboard do canal 'Só um Rabisco'.\n"
-        "Gere uma ação/cena visual ÚNICA e específica em INGLÊS para cada corte abaixo, "
-        "traduzindo literalmente ou metaforicamente a fala exata daquele momento dentro do contexto do roteiro completo.\n"
-        "Regras obrigatórias:\n"
-        "- NÃO repita a mesma pose ou enquadramento em cenas seguidas.\n"
-        "- NÃO inclua a descrição física fixa do protagonista nem o sufixo de estilo (isso será concatenado depois).\n"
-        "- Descreva a ação, expressão facial, objeto/cenário e interação da cena.\n"
+        "O vídeo é montado em CAMADAS: você descreve apenas o FUNDO (cenário vazio ou objeto em destaque); "
+        "o protagonista é um PNG transparente adicionado depois por cima, reagindo à fala.\n"
+        f"Existem EXATAMENTE {len(blocos)} cortes sequenciais. Para CADA corte, gere em INGLÊS uma descrição visual "
+        "100% fiel e específica ao que está sendo falado naquele momento exato, usando a 'Frase completa' quando o corte "
+        "estiver no meio de uma frase.\n\n"
+        "REGRAS OBRIGATÓRIAS (cumpra todas sem exceção):\n"
+        "- ZERO REPETIÇÃO NO VÍDEO INTEIRO: todos os cenários/objetos principais das cenas DEVEM ser diferentes entre si! "
+        "NUNCA repita o mesmo cômodo, espelho, cérebro ou relógio várias vezes ao longo do vídeo.\n"
+        "- Quando uma frase for dividida em 2 ou 3 cortes seguidos, crie visuais COMPLEMENTARES da mesma ideia sem repetir o mesmo objeto "
+        "(ex.: corte sobre 'encosta a' -> quarto à noite com janela e lua na parede; corte seguinte sobre 'cabeça no travesseiro' -> "
+        "close-up de um travesseiro branco macio sobre lençol pastel amassado).\n"
+        "- Traduza literalmente ou metaforicamente os substantivos e ações reais da fala (ex.: chave perdida em gancho vazio, crachá de nome em branco, "
+        "interruptor de luz desligado no escuro, pasta de arquivo brilhando, calçada vazia com placa de tchau, etc.).\n"
+        "- NUNCA use cenários genéricos desconectados da fala.\n"
+        "- O fundo NUNCA pode conter pessoas, personagens, rostos, mãos ou partes do corpo (empty scene, no people, no characters).\n"
+        "- NÃO inclua descrição do protagonista nem o sufixo de estilo (isso será concatenado depois).\n"
         f"{instrucao_fundo}\n"
-        "- Se houver texto escrito dentro da ilustração (ex: placa, papel, tela), coloque esse texto em PORTUGUÊS DO BRASIL entre aspas simples.\n"
+        "- Se houver texto escrito dentro da ilustração (ex: placa, papel, tela, arquivo), coloque esse texto em PORTUGUÊS DO BRASIL entre aspas simples.\n"
         f"- Formato do vídeo: {formato}.\n"
-        "- Escolha o efeito entre: pop-in, zoom-in, zoom-out, slide-up, shake, cut.\n"
-        "- Retorne EXCLUSIVAMENTE um JSON array com objetos {\"indice\": int, \"acao\": string, \"efeito\": string}, na mesma quantidade e ordem dos cortes.\n\n"
+        "- efeito (câmera do fundo): escolha entre pop-in, zoom-in, zoom-out, slide-up, shake, cut.\n"
+        f"- tags_pose: de 1 a 3 tags da lista de tags disponíveis que descrevam a emoção/pose ideal do personagem reagindo à fala: [{tags_txt}]. Use lista vazia se nenhuma servir.\n"
+        f"- posicao: onde o personagem fica na tela sem tapar o elemento principal do fundo, entre: {', '.join(POSICOES)}.\n"
+        f"- animacao: entrada/movimento do personagem, entre: {', '.join(ANIMACOES)}.\n"
+        f"- Retorne EXCLUSIVAMENTE um JSON array com EXATAMENTE {len(blocos)} objetos no formato "
+        "{\"indice\": int, \"fundo\": string, \"efeito\": string, \"tags_pose\": [string], \"posicao\": string, \"animacao\": string}, "
+        "na mesma ordem dos cortes.\n\n"
         f"REGRAS VISUAIS:\n{regras_visuais}\n\n"
         f"ROTEIRO COMPLETO:\n{roteiro_completo}\n\n"
         f"CORTES DECUPADOS:\n{lista_cortes}"
     )
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
     body = json.dumps(
         {
             "contents": [{"parts": [{"text": prompt_sistema}]}],
@@ -401,29 +512,69 @@ def _gerar_acoes_via_gemini(
         }
     ).encode("utf-8")
 
-    req = urllib.request.Request(
-        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-        texto_json = payload["candidates"][0]["content"]["parts"][0]["text"]
-        itens = json.loads(texto_json)
-        if isinstance(itens, list) and len(itens) == len(blocos):
-            efeitos_validos = {"pop-in", "zoom-in", "zoom-out", "slide-up", "shake", "cut"}
-            resultado: list[dict[str, str]] = []
+    efeitos_validos = {"pop-in", "zoom-in", "zoom-out", "slide-up", "shake", "cut"}
+    ultimo_erro: str | None = None
+    candidatos_modelo = modelos or GEMINI_MODELOS_PADRAO
+
+    for modelo in candidatos_modelo:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
+        req = urllib.request.Request(
+            url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            texto_json = payload["candidates"][0]["content"]["parts"][0]["text"]
+            itens = json.loads(texto_json)
+            if not isinstance(itens, list) or len(itens) != len(blocos):
+                ultimo_erro = (
+                    f"{modelo}: retornou {len(itens) if isinstance(itens, list) else type(itens).__name__} "
+                    f"itens (esperado {len(blocos)})."
+                )
+                continue
+
+            resultado: list[dict[str, Any]] = []
+            valido = True
             for item in itens:
-                acao = str(item.get("acao", "")).strip().rstrip(".")
+                fundo = str(item.get("fundo") or item.get("acao") or "").strip().rstrip(".")
+                if not fundo:
+                    valido = False
+                    break
                 efeito = str(item.get("efeito", "pop-in")).strip().lower()
                 if efeito not in efeitos_validos:
                     efeito = "pop-in"
-                if not acao:
-                    return None
-                resultado.append({"acao": acao, "efeito": efeito})
-            return resultado
-    except (urllib.error.URLError, KeyError, IndexError, json.JSONDecodeError, TimeoutError):
-        return None
-    return None
+                tags_brutas = item.get("tags_pose") or []
+                tags = [str(t).strip() for t in tags_brutas if str(t).strip()][:3]
+                posicao = str(item.get("posicao", "")).strip().lower()
+                animacao = str(item.get("animacao", "")).strip().lower()
+                resultado.append(
+                    {
+                        "fundo": fundo,
+                        "efeito": efeito,
+                        "tags_pose": tags,
+                        "posicao": posicao if posicao in POSICOES else None,
+                        "animacao": animacao if animacao in ANIMACOES else None,
+                    }
+                )
+            if valido:
+                return resultado, modelo, None
+            ultimo_erro = f"{modelo}: retorno com campo 'fundo' vazio."
+        except urllib.error.HTTPError as exc:
+            detalhe = ""
+            try:
+                err_json = json.loads(exc.read().decode("utf-8", errors="replace"))
+                detalhe = str(err_json.get("error", {}).get("message") or "")[:180]
+            except Exception:
+                detalhe = ""
+            ultimo_erro = f"{modelo}: HTTP {exc.code}" + (f" ({detalhe})" if detalhe else "")
+            if exc.code in (404, 429, 500, 502, 503, 504):
+                continue
+            break
+        except (urllib.error.URLError, KeyError, IndexError, json.JSONDecodeError, TimeoutError, AttributeError, TypeError) as exc:
+            ultimo_erro = f"{modelo}: {type(exc).__name__}: {exc}"
+            continue
+
+    return None, None, ultimo_erro or "Falha desconhecida ao chamar API do Gemini."
 
 
 def _carregar_roteiro_e_blocos(
@@ -480,9 +631,9 @@ def montar_pacote_chat(
     ]
 
     regra_fallback_fundo = (
-        "fundo #FFFFFF."
+        "um único objeto/ícone em destaque, centralizado, sobre fundo #FFFFFF, sem pessoas."
         if tipo == "short"
-        else "fundo ilustrado completo (cores, objetos ou paisagens) em tons suaves/dessaturados, sem cores fortes."
+        else "cenário ilustrado completo e vazio (sem pessoas) em tons suaves/dessaturados, sem cores fortes."
     )
 
     pacote = "\n".join(
@@ -493,6 +644,9 @@ def montar_pacote_chat(
             "## 1. REGRAS DE ESTILO E RITMO",
             regras or f"Cortes dinâmicos de 1,5s a 3,0s; prompts em inglês; textos na imagem em PT-BR; {regra_fallback_fundo}",
             "",
+            "O vídeo é montado em CAMADAS: o prompt descreve APENAS o fundo (cenário vazio ou objeto em destaque). "
+            "O personagem NÃO entra no prompt: ele é adicionado depois como PNG transparente por cima.",
+            "",
             f"Sufixo obrigatório no final de TODA linha:\n{sufixo}",
             "",
             "## 2. ROTEIRO COMPLETO DO PROJETO",
@@ -502,7 +656,7 @@ def montar_pacote_chat(
             *linhas_cortes,
             "",
             "## INSTRUÇÃO FINAL",
-            "Gere 1 linha por timestamp no formato `[MM:SS] <ação específica em inglês traduzindo a fala do corte>. <sufixo obrigatório>`, sem repetir poses em sequência.",
+            "Gere 1 linha por timestamp no formato `[MM:SS] <cenário vazio ou objeto em destaque em inglês, sem pessoas ou personagens, ilustrando a fala do corte>. <sufixo obrigatório>`, sem repetir o mesmo cenário/objeto em sequência.",
         ]
     )
 
@@ -722,15 +876,81 @@ def _fatiar_por_narracao(narracao: str, tipo: str) -> tuple[list[dict[str, Any]]
     return blocos, round(cursor, 2)
 
 
+def _descrever_personagem(personagem: dict[str, Any]) -> str:
+    if personagem.get("tipo") not in ("pose", "sprite"):
+        return "nenhum"
+    return (
+        f"{personagem['tipo']} `{personagem.get('asset', '')}` | "
+        f"{personagem.get('posicao', 'center')} | {personagem.get('animacao', 'none')}"
+    )
+
+
+def _montar_cena(
+    inicio: float,
+    fim: float,
+    efeito: str,
+    fala: str,
+    legendas: list[dict[str, Any]],
+    arquivo: str,
+    prompt_fundo: str,
+    seletor: SeletorPersonagem,
+    tags_pose: list[str],
+    posicao: str | None = None,
+    animacao: str | None = None,
+) -> dict[str, Any]:
+    """Monta uma cena em camadas: `fundo` (imagem gerada) + `personagem` (PNG transparente da biblioteca)."""
+    personagem = seletor.escolher(
+        fala,
+        efeito=efeito,
+        tags_desejadas=tags_pose,
+        posicao=posicao,
+        animacao=animacao,
+    )
+    return {
+        "arquivo": arquivo,
+        "inicio": inicio,
+        "fim": fim,
+        "efeito": efeito,
+        "texto": fala,
+        "narracao": fala,
+        "legendas": legendas,
+        "escala": 1.0,
+        "fundo": {"arquivo": arquivo, "prompt": prompt_fundo},
+        "personagem": personagem,
+    }
+
+
+def sugerir_personagens(cenas_data: dict[str, Any], apenas_sem_personagem: bool = False) -> int:
+    """Escolhe pose/sprite da biblioteca para cada cena de um cenas.json existente (sem tocar nos fundos)."""
+    seletor = SeletorPersonagem(formato=str(cenas_data.get("formato") or "16:9"))
+    alteradas = 0
+    for cena in cenas_data.get("cenas", []):
+        atual = cena.get("personagem") if isinstance(cena.get("personagem"), dict) else None
+        if apenas_sem_personagem and atual and atual.get("tipo") in ("pose", "sprite"):
+            seletor.registrar(atual)
+            continue
+        fala = str(cena.get("narracao") or cena.get("texto") or "")
+        tags = (atual or {}).get("tags") or _tags_pose_por_fala(fala)
+        cena["personagem"] = seletor.escolher(
+            fala,
+            efeito=str(cena.get("efeito") or ""),
+            tags_desejadas=list(tags),
+        )
+        alteradas += 1
+    cenas_data["versao_schema"] = SCHEMA_VERSAO
+    return alteradas
+
+
 def gerar_storyboard_automatico(
     pasta_projeto: Path,
     tipo_forcado: str | None = None,
     sincronizar_raiz: bool = True,
 ) -> dict[str, Any]:
     """
-    Gera automaticamente cenas.json, 04-storyboard-e-prompts.md, prompts_flow.txt
-    e (opcionalmente) prompts_imagens.txt na raiz a partir de 03-timestamps.json
-    ou 02-narracao.txt.
+    Gera automaticamente cenas.json (fundo + personagem em camadas), 04-storyboard-e-prompts.md,
+    prompts_flow.txt e (opcionalmente) prompts_imagens.txt na raiz a partir de 03-timestamps.json
+    ou 02-narracao.txt. Os prompts de imagem descrevem apenas o fundo/objeto; o personagem vem
+    da biblioteca de assets (assets/personagem/sprites_output).
     """
     meta = ler_ou_criar_meta_projeto(pasta_projeto)
     tipo = tipo_forcado if tipo_forcado in ("longo", "short") else meta["tipo"]
@@ -745,16 +965,33 @@ def gerar_storyboard_automatico(
     )
     regras_visuais = _carregar_regras_visuais(raiz)
 
-    acoes_gemini: list[dict[str, str]] | None = None
+    seletor = SeletorPersonagem(formato=formato)
+
+    fundos_gemini: list[dict[str, Any]] | None = None
+    modelo_ia: str | None = None
+    aviso_ia: str | None = None
     api_key = _obter_gemini_api_key(raiz)
     if api_key:
-        acoes_gemini = _gerar_acoes_via_gemini(
+        fundos_gemini, modelo_ia, erro_ia = _gerar_fundos_via_gemini(
             roteiro_completo=roteiro_completo,
             blocos=blocos,
             formato=formato,
             regras_visuais=regras_visuais,
             api_key=api_key,
+            tags_disponiveis=seletor.tags_disponiveis(),
+            modelos=_obter_gemini_modelos(raiz),
         )
+        if not fundos_gemini and erro_ia:
+            aviso_ia = f"Gemini falhou ({erro_ia}); usando fallback local."
+    else:
+        aviso_ia = "GEMINI_API_KEY não configurada no .env; usando fallback local."
+
+    geracao_ia = "gemini" if fundos_gemini else "fallback_local"
+    rotulo_geracao = (
+        f"Gemini API ({modelo_ia})"
+        if fundos_gemini
+        else f"Fallback local ({aviso_ia or 'sem IA'})"
+    )
 
     cenas_json_lista: list[dict[str, Any]] = []
     linhas_md: list[str] = [
@@ -762,7 +999,8 @@ def gerar_storyboard_automatico(
         "",
         f"- **Formato:** `{formato}` ({'Short / Reels' if tipo == 'short' else 'YouTube Longo'})",
         f"- **Origem da decupagem:** `{'03-timestamps.json' if origem == 'timestamps' else '02-narracao.txt (estimado)'}`",
-        f"- **Geração de cenas:** `{'Gemini API (roteiro completo)' if acoes_gemini else 'Contextual local (fala do corte)'}`",
+        f"- **Geração de cenas:** `{rotulo_geracao}`",
+        f"- **Camadas:** fundo gerado no ComfyUI + personagem da biblioteca (`{len(seletor.assets)}` assets)",
         f"- **Duração total:** `{duracao_total:.2f}s`",
         f"- **Total de cenas:** `{len(blocos)}`",
         "",
@@ -773,7 +1011,7 @@ def gerar_storyboard_automatico(
     tempos_txt_lista: list[str] = []
 
     sufixo = _obter_sufixo_estilo(tipo, formato)
-    acao_anterior = ""
+    fundos_usados: set[str] = set()
 
     for idx, bloco in enumerate(blocos, start=1):
         fala = bloco["texto"]
@@ -781,28 +1019,35 @@ def gerar_storyboard_automatico(
         fim = float(bloco["fim"])
         marca = _formatar_mm_ss(inicio)
 
-        if acoes_gemini:
-            acao = acoes_gemini[idx - 1]["acao"]
-            efeito = acoes_gemini[idx - 1]["efeito"]
+        posicao: str | None = None
+        animacao: str | None = None
+        if fundos_gemini:
+            item = fundos_gemini[idx - 1]
+            fundo = item["fundo"]
+            efeito = item["efeito"]
+            tags_pose = item["tags_pose"] or _tags_pose_por_fala(fala)
+            posicao = item["posicao"]
+            animacao = item["animacao"]
         else:
-            acao, efeito = _escolher_acao_e_efeito(fala, idx, acao_anterior)
-        acao_anterior = acao
+            fundo, efeito, tags_pose = _escolher_fundo_efeito_tags(fala, idx, fundos_usados)
 
         legendas = _gerar_blocos_legenda(fala, inicio, fim, bloco.get("palavras"))
-        prompt_completo = f"{marca} {acao}. {sufixo}"
+        prompt_completo = f"{marca} {fundo}. {sufixo}"
 
-        cenas_json_lista.append(
-            {
-                "arquivo": f"assets_atual/cenas/cena_{idx:02d}.png",
-                "inicio": inicio,
-                "fim": fim,
-                "efeito": efeito,
-                "texto": fala,
-                "narracao": fala,
-                "legendas": legendas,
-                "escala": 1.0,
-            }
+        cena = _montar_cena(
+            inicio=inicio,
+            fim=fim,
+            efeito=efeito,
+            fala=fala,
+            legendas=legendas,
+            arquivo=f"assets_atual/cenas/cena_{idx:02d}.png",
+            prompt_fundo=limpar_prefixo_timestamp(prompt_completo),
+            seletor=seletor,
+            tags_pose=tags_pose,
+            posicao=posicao,
+            animacao=animacao,
         )
+        cenas_json_lista.append(cena)
 
         linhas_md.append(
             f"### Cena {idx:03d} — {marca} (`{inicio:.2f}s` → `{fim:.2f}s` | Efeito: `{efeito}`)"
@@ -810,6 +1055,8 @@ def gerar_storyboard_automatico(
         linhas_md.append(f'> *"{fala}"*')
         linhas_md.append("")
         linhas_md.append(prompt_completo)
+        linhas_md.append("")
+        linhas_md.append(f"> Personagem (camada): {_descrever_personagem(cena['personagem'])}")
         linhas_md.append("")
 
         prompts_txt_lista.append(limpar_prefixo_timestamp(prompt_completo))
@@ -821,6 +1068,7 @@ def gerar_storyboard_automatico(
         "fps": 30,
         "duracao_total": duracao_total,
         "audio": "assets_atual/audio.wav",
+        "versao_schema": SCHEMA_VERSAO,
         "cenas": cenas_json_lista,
     }
 
@@ -851,6 +1099,9 @@ def gerar_storyboard_automatico(
         "formato": formato,
         "duracao_total": duracao_total,
         "qtd_cenas": len(cenas_json_lista),
+        "geracao_ia": geracao_ia,
+        "modelo_ia": modelo_ia,
+        "aviso_ia": aviso_ia,
         "cenas": cenas_payload,
         "storyboard": storyboard_md,
     }
@@ -950,6 +1201,7 @@ def gerar_cenas_de_prompts_salvos(
     )
 
     efeitos_alternados = ["zoom-in", "zoom-out", "impact-pop"]
+    seletor = SeletorPersonagem(formato=formato)
     cenas_json_lista: list[dict[str, Any]] = []
     palavra_cursor = 0
 
@@ -986,22 +1238,23 @@ def gerar_cenas_de_prompts_salvos(
             legendas = []
 
         cenas_json_lista.append(
-            {
-                "arquivo": f"assets_atual/cenas/cena_{idx:02d}.png",
-                "inicio": inicio,
-                "fim": fim,
-                "efeito": efeito,
-                "texto": fala,
-                "narracao": fala,
-                "legendas": legendas,
-                "prompt": prompt_limpo,
-                "escala": 1.0,
-            }
+            _montar_cena(
+                inicio=inicio,
+                fim=fim,
+                efeito=efeito,
+                fala=fala,
+                legendas=legendas,
+                arquivo=f"assets_atual/cenas/cena_{idx:02d}.png",
+                prompt_fundo=prompt_limpo,
+                seletor=seletor,
+                tags_pose=_tags_pose_por_fala(fala),
+            )
         )
 
     cenas_payload = {
         "projeto": pasta_projeto.name,
         "formato": formato,
+        "versao_schema": SCHEMA_VERSAO,
         "fps": 30,
         "duracao_total": duracao_total,
         "audio": "assets_atual/audio.wav",

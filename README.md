@@ -6,10 +6,12 @@ Aplicativo web local e conjunto de automações para gerenciar a produção de v
 
 - `backend/` — API em **FastAPI** (`backend/main.py`) para gerenciar projetos, arquivos e execução dos scripts.
 - `frontend/` — Interface web em **React + TypeScript + Vite + Tailwind CSS**.
+- `assets/` — Biblioteca fixa do canal (`personagem/grades_input/`, `personagem/sprites_output/`, `secundarios/`, `audio-base/`).
 - `scripts/` — Automações em Python:
   - `extrair_tempos.py` — Transcrição e timestamps por palavra/segmento via `faster-whisper`.
-  - `limpar_imagens.py` — Remoção de fundo branco externo em lote com OpenCV/Pillow.
-  - `preparar_render.py` — Cópia de `cenas.json`, áudio e PNGs recortados para `template-hyperframes/`.
+  - `limpar_imagens.py` — Remoção de fundo branco externo em lote com OpenCV/Pillow (ou `--manter-fundo` para vídeos longos).
+  - `cortar_sprites.py` — Recorte automático de grades 2x2 em quadros `512x512` com fundo transparente e geração de `strip.png` horizontal para GSAP (use `--poses` para grades de poses avulsas com `mesma_escala=False`).
+  - `preparar_render.py` — Cópia de `cenas.json`, áudio e PNGs para `template-hyperframes/`.
 - `template-hyperframes/` — Composição HTML/GSAP para renderização do vídeo.
 - `preview-thumb/` — Preview standalone de thumbnail mobile.
 - `.agent/` — Regras e workflows de criação de roteiro, prompts visuais e SEO.

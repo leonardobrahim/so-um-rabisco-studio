@@ -14,6 +14,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from backend.personagem import (
+    FONTE_PADRAO,
+    atualizar_meta_pasta,
+    listar_biblioteca,
+    resolver_asset,
+)
 from backend.pipeline import (
     gerar_cenas_de_prompts_salvos,
     gerar_storyboard_automatico,
@@ -21,6 +27,7 @@ from backend.pipeline import (
     ler_ou_criar_meta_projeto,
     montar_pacote_chat,
     salvar_meta_projeto,
+    sugerir_personagens,
 )
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -64,6 +71,13 @@ class TextoPayload(BaseModel):
 
 class CenasPayload(BaseModel):
     dados: dict[str, Any]
+
+
+class PersonagemMetaPayload(BaseModel):
+    modo: Literal["poses", "sprite"] | None = None
+    fps: int | None = None
+    tags_pasta: list[str] | None = None
+    tags: dict[str, list[str]] | None = None
 
 
 def _validar_nome_projeto(nome: str) -> str:
@@ -417,6 +431,51 @@ def salvar_cenas(nome: str, payload: CenasPayload) -> dict[str, Any]:
         "arquivo": "cenas.json",
         "qtd_cenas": len(payload.dados.get("cenas", [])),
     }
+
+
+@app.post("/api/projetos/{nome}/cenas/sugerir-personagem")
+def sugerir_personagem_cenas(
+    nome: str,
+    payload: CenasPayload,
+    apenas_sem_personagem: bool = False,
+) -> dict[str, Any]:
+    """Sugere pose/sprite da biblioteca para cada cena do cenas.json enviado, sem gravar em disco."""
+    _resolver_projeto(nome)
+    alteradas = sugerir_personagens(payload.dados, apenas_sem_personagem=apenas_sem_personagem)
+    return {"ok": True, "alteradas": alteradas, "dados": payload.dados}
+
+
+@app.get("/api/personagem/biblioteca")
+def obter_biblioteca_personagem() -> dict[str, Any]:
+    return listar_biblioteca()
+
+
+@app.get("/api/personagem/arquivo/{pasta}/{arquivo}")
+def obter_arquivo_personagem(pasta: str, arquivo: str, fonte: str = FONTE_PADRAO) -> FileResponse:
+    caminho = resolver_asset(fonte, f"{pasta}/{arquivo}")
+    if caminho is None:
+        raise HTTPException(status_code=404, detail="Asset de personagem não encontrado.")
+    return FileResponse(caminho)
+
+
+@app.put("/api/personagem/biblioteca/{pasta}")
+def atualizar_biblioteca_personagem(
+    pasta: str,
+    payload: PersonagemMetaPayload,
+    fonte: str = FONTE_PADRAO,
+) -> dict[str, Any]:
+    try:
+        atualizar_meta_pasta(
+            fonte,
+            pasta,
+            modo=payload.modo,
+            fps=payload.fps,
+            tags_pasta=payload.tags_pasta,
+            tags=payload.tags,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True, **listar_biblioteca()}
 
 
 @app.post("/api/projetos/{nome}/audio")

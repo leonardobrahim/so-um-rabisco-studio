@@ -12,9 +12,27 @@ import {
   Check,
   Wand2,
   ArrowRight,
+  Users,
+  FlipHorizontal2,
+  AlertTriangle,
 } from "lucide-react";
 import { api } from "../api";
-import type { AbaId, CenaItem, CenasConfig, EfeitoCena, ProjetoResumo } from "../types";
+import type {
+  AbaId,
+  BibliotecaPersonagem,
+  CenaItem,
+  CenasConfig,
+  EfeitoCena,
+  PersonagemAnimacao,
+  PersonagemPosicao,
+  ProjetoResumo,
+} from "../types";
+import { CenaPreview, extrairNomePng } from "./CenaPreview";
+import {
+  ANIMACOES_PERSONAGEM,
+  POSICOES_PERSONAGEM,
+  PersonagemPicker,
+} from "./PersonagemPicker";
 
 interface Props {
   projeto: ProjetoResumo;
@@ -31,16 +49,16 @@ const EFEITOS: EfeitoCena[] = [
   "cut",
 ];
 
-function extrairNomePng(arquivoPath: string | undefined): string {
-  if (!arquivoPath) return "";
-  const partes = arquivoPath.split("/");
-  return partes[partes.length - 1] || "";
-}
-
 export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
   const [config, setConfig] = useState<CenasConfig | null>(null);
   const [storyboardMd, setStoryboardMd] = useState("");
   const [imagensCenas, setImagensCenas] = useState<Set<string>>(new Set());
+  const [biblioteca, setBiblioteca] = useState<BibliotecaPersonagem>({
+    pastas: [],
+    assets: [],
+  });
+  const [cenaEditandoIdx, setCenaEditandoIdx] = useState<number | null>(null);
+  const [sugerindo, setSugerindo] = useState(false);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [gerando, setGerando] = useState(false);
@@ -68,14 +86,18 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
       api.lerStoryboard(projeto.nome),
       api.listarImagens(projeto.nome),
       api.obterPacoteChat(projeto.nome, projeto.tipo).catch(() => null),
+      api
+        .listarBibliotecaPersonagem()
+        .catch(() => ({ pastas: [], assets: [] })),
     ])
-      .then(([cenasRes, sbRes, imgRes, pkgRes]) => {
+      .then(([cenasRes, sbRes, imgRes, pkgRes, bibRes]) => {
         if (!ativo) return;
         setConfig(cenasRes.dados);
         setJsonTexto(JSON.stringify(cenasRes.dados, null, 2));
         setStoryboardMd(sbRes.conteudo);
         setImagensCenas(new Set(imgRes.cenas));
         setPacoteChat(pkgRes?.pacote ?? "");
+        setBiblioteca(bibRes);
       })
       .catch((err) => {
         if (!ativo) return;
@@ -99,9 +121,14 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
 
   function atualizarCena(idx: number, patch: Partial<CenaItem>) {
     if (!config) return;
-    const cenas = config.cenas.map((c, i) =>
-      i === idx ? { ...c, ...patch } : c
-    );
+    const cenas = config.cenas.map((c, i) => {
+      if (i !== idx) return c;
+      const atualizada: CenaItem = { ...c, ...patch };
+      if (patch.arquivo !== undefined && c.fundo) {
+        atualizada.fundo = { ...c.fundo, arquivo: patch.arquivo };
+      }
+      return atualizada;
+    });
     atualizarConfig({ ...config, cenas });
   }
 
@@ -112,15 +139,40 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
         ? Number(config.cenas[config.cenas.length - 1].fim) || 0
         : 0;
     const num = String(config.cenas.length + 1).padStart(2, "0");
+    const arquivoFundo = `assets_atual/cenas/cena_${num}.png`;
     const nova: CenaItem = {
-      arquivo: `assets_atual/cenas/cena_${num}.png`,
+      arquivo: arquivoFundo,
       inicio: Number(ultimoFim.toFixed(2)),
       fim: Number((ultimoFim + 2.0).toFixed(2)),
       efeito: "pop-in",
       texto: "",
       escala: 1.0,
+      fundo: { arquivo: arquivoFundo },
+      personagem: { tipo: "none", fonte: "protagonista" },
     };
     atualizarConfig({ ...config, cenas: [...config.cenas, nova] });
+  }
+
+  async function handleSugerirPersonagens() {
+    if (!config || config.cenas.length === 0) return;
+    setSugerindo(true);
+    setErro(null);
+    setMensagem(null);
+    try {
+      const res = await api.sugerirPersonagem(projeto.nome, config, false);
+      atualizarConfig(res.dados);
+      setMensagem(
+        `Personagens sugeridos para ${res.alteradas} cena(s). Clique em Salvar (Ctrl+S) para gravar cenas.json.`
+      );
+    } catch (err) {
+      setErro(
+        err instanceof Error
+          ? err.message
+          : "Erro ao sugerir personagens da biblioteca"
+      );
+    } finally {
+      setSugerindo(false);
+    }
   }
 
   function removerCena(idx: number) {
@@ -138,11 +190,18 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
       atualizarConfig(res.cenas);
       setStoryboardMd(res.storyboard);
       setModoJson(false);
+      const motorTxt =
+        res.geracao_ia === "gemini"
+          ? `Gemini (${res.modelo_ia || "IA"})`
+          : "Fallback local";
       setMensagem(
-        `Gerado automaticamente a partir de ${
+        `Gerado via ${motorTxt} a partir de ${
           res.origem === "timestamps" ? "03-timestamps.json" : "02-narracao.txt"
         }: ${res.qtd_cenas} cenas (${res.formato}), prompts_imagens.txt e prompts_flow.txt atualizados!`
       );
+      if (res.aviso_ia) {
+        setErro(res.aviso_ia);
+      }
       onAtualizado();
     } catch (err) {
       setErro(
@@ -449,6 +508,23 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
             {modoJson ? "Editor Visual" : "JSON Raw"}
           </button>
 
+          {!modoJson && config.cenas.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void handleSugerirPersonagens()}
+              disabled={sugerindo}
+              title={`Escolhe automaticamente pose ou sprite de assets/personagem/sprites_output/ (${biblioteca.assets.length} disponíveis)`}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-sky-500/15 border border-sky-500/40 hover:bg-sky-500/25 disabled:opacity-50 text-sky-200 text-xs font-semibold transition cursor-pointer"
+            >
+              {sugerindo ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Users className="w-3.5 h-3.5" />
+              )}
+              Sugerir Personagens ({biblioteca.assets.length})
+            </button>
+          )}
+
           {!modoJson && (
             <button
               type="button"
@@ -673,20 +749,21 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
               <thead className="bg-[#0e1117] text-slate-400 uppercase text-[10px] tracking-wider sticky top-0 z-10 border-b border-slate-800">
                 <tr>
                   <th className="py-2.5 px-3 w-10">#</th>
-                  <th className="py-2.5 px-3 w-16">Preview</th>
-                  <th className="py-2.5 px-3">Arquivo</th>
-                  <th className="py-2.5 px-3 w-24">Início (s)</th>
-                  <th className="py-2.5 px-3 w-24">Fim (s)</th>
-                  <th className="py-2.5 px-3 w-20">Dur.</th>
-                  <th className="py-2.5 px-3 w-32">Efeito</th>
+                  <th className="py-2.5 px-3 w-20">Preview</th>
+                  <th className="py-2.5 px-3">Fundo (Arquivo)</th>
+                  <th className="py-2.5 px-3 min-w-[240px]">Personagem (Camada)</th>
+                  <th className="py-2.5 px-3 w-20">Início</th>
+                  <th className="py-2.5 px-3 w-20">Fim</th>
+                  <th className="py-2.5 px-3 w-16">Dur.</th>
+                  <th className="py-2.5 px-3 w-28">Câmera Fundo</th>
                   <th className="py-2.5 px-3">Texto de Impacto</th>
-                  <th className="py-2.5 px-3 w-20">Escala</th>
-                  <th className="py-2.5 px-3 w-12"></th>
+                  <th className="py-2.5 px-3 w-16">Escala</th>
+                  <th className="py-2.5 px-3 w-10"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/70">
                 {config.cenas.map((cena, idx) => {
-                  const nomePng = extrairNomePng(cena.arquivo);
+                  const nomePng = extrairNomePng(cena.fundo?.arquivo || cena.arquivo);
                   const temImagem = imagensCenas.has(nomePng);
                   const inicio = Number(cena.inicio) || 0;
                   const fim = Number(cena.fim) || 0;
@@ -695,6 +772,16 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                   const qtdPalavras = textoStr.trim()
                     ? textoStr.trim().split(/\s+/).length
                     : 0;
+                  const p = cena.personagem;
+                  const temP = Boolean(p && (p.tipo === "pose" || p.tipo === "sprite"));
+                  const assetExiste =
+                    !temP ||
+                    !p?.asset ||
+                    biblioteca.assets.some(
+                      (a) =>
+                        a.id === p.asset &&
+                        a.fonte === (p.fonte || "protagonista")
+                    );
 
                   return (
                     <tr
@@ -705,22 +792,16 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                         {String(idx + 1).padStart(2, "0")}
                       </td>
                       <td className="py-2 px-3">
-                        <div
-                          className={`${
-                            projeto.tipo === "short" ? "w-8 h-12" : "w-12 h-8"
-                          } rounded border border-slate-700 overflow-hidden checkerboard-dark flex items-center justify-center`}
-                        >
-                          {temImagem ? (
-                            <img
-                              src={api.imagemCenaUrl(projeto.nome, nomePng)}
-                              alt={nomePng}
-                              className="w-full h-full object-contain"
-                              loading="lazy"
-                            />
-                          ) : (
-                            <span className="text-[9px] text-slate-500">---</span>
-                          )}
-                        </div>
+                        <CenaPreview
+                          projetoNome={projeto.nome}
+                          formato={config.formato || projeto.formato}
+                          cena={cena}
+                          temImagemFundo={temImagem}
+                          assetsBiblioteca={biblioteca.assets}
+                          tamanho="thumb"
+                          onClick={() => setCenaEditandoIdx(idx)}
+                          title="Clique para editar pose/sprite e posição do personagem"
+                        />
                       </td>
                       <td className="py-2 px-3">
                         <input
@@ -729,8 +810,124 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                           onChange={(e) =>
                             atualizarCena(idx, { arquivo: e.target.value })
                           }
-                          className="w-full min-w-[190px] bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-2 py-1 font-mono text-[11px] text-slate-200 outline-none"
+                          title={cena.fundo?.prompt || cena.prompt || undefined}
+                          className="w-full min-w-[160px] bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-2 py-1 font-mono text-[11px] text-slate-200 outline-none"
                         />
+                      </td>
+                      <td className="py-2 px-3">
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setCenaEditandoIdx(idx)}
+                              className={`flex-1 min-w-0 flex items-center justify-between gap-1.5 px-2 py-1 rounded border text-left transition cursor-pointer ${
+                                temP
+                                  ? "bg-[#0e1117] border-slate-700 hover:border-[#ffc928] text-slate-200"
+                                  : "bg-[#0e1117]/60 border-slate-800 hover:border-slate-600 text-slate-400"
+                              }`}
+                              title="Trocar pose/sprite e posição"
+                            >
+                              <span className="truncate font-mono text-[11px]">
+                                {temP ? p?.asset || "escolher..." : "Sem personagem"}
+                              </span>
+                              <span
+                                className={`shrink-0 px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${
+                                  p?.tipo === "sprite"
+                                    ? "bg-purple-500/25 text-purple-200"
+                                    : p?.tipo === "pose"
+                                    ? "bg-emerald-500/20 text-emerald-300"
+                                    : "bg-slate-800 text-slate-400"
+                                }`}
+                              >
+                                {p?.tipo || "none"}
+                              </span>
+                            </button>
+                            {!assetExiste && (
+                              <span
+                                title="Asset não encontrado na biblioteca atual"
+                                className="text-amber-400 shrink-0"
+                              >
+                                <AlertTriangle className="w-3.5 h-3.5" />
+                              </span>
+                            )}
+                          </div>
+
+                          {temP && p && (
+                            <div className="flex items-center gap-1">
+                              <select
+                                value={p.posicao || "center"}
+                                onChange={(e) =>
+                                  atualizarCena(idx, {
+                                    personagem: {
+                                      ...p,
+                                      posicao: e.target.value as PersonagemPosicao,
+                                    },
+                                  })
+                                }
+                                title="Posição na tela"
+                                className="bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-1.5 py-0.5 text-[10px] text-slate-300 outline-none"
+                              >
+                                {POSICOES_PERSONAGEM.map((pos) => (
+                                  <option key={pos.value} value={pos.value}>
+                                    {pos.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <select
+                                value={p.animacao || "pop-in"}
+                                onChange={(e) =>
+                                  atualizarCena(idx, {
+                                    personagem: {
+                                      ...p,
+                                      animacao: e.target.value as PersonagemAnimacao,
+                                    },
+                                  })
+                                }
+                                title="Animação do personagem"
+                                className="bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-1.5 py-0.5 text-[10px] text-slate-300 outline-none"
+                              >
+                                {ANIMACOES_PERSONAGEM.map((an) => (
+                                  <option key={an.value} value={an.value}>
+                                    {an.value}
+                                  </option>
+                                ))}
+                              </select>
+                              <input
+                                type="number"
+                                step="0.1"
+                                min={0.3}
+                                max={2}
+                                value={p.escala ?? 1}
+                                onChange={(e) =>
+                                  atualizarCena(idx, {
+                                    personagem: {
+                                      ...p,
+                                      escala: Number(e.target.value) || 1,
+                                    },
+                                  })
+                                }
+                                title="Escala do personagem"
+                                className="w-12 bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-1 py-0.5 font-mono text-[10px] text-slate-300 outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  atualizarCena(idx, {
+                                    personagem: { ...p, flip: !p.flip },
+                                  })
+                                }
+                                title="Espelhar horizontalmente"
+                                className={`p-1 rounded border cursor-pointer ${
+                                  p.flip
+                                    ? "bg-[#ffc928]/20 border-[#ffc928]/60 text-[#ffc928]"
+                                    : "bg-[#0e1117] border-slate-800 text-slate-400 hover:text-slate-200"
+                                }`}
+                              >
+                                <FlipHorizontal2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2 px-3">
                         <input
@@ -742,7 +939,7 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                               inicio: Number(e.target.value) || 0,
                             })
                           }
-                          className="w-20 bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-2 py-1 font-mono text-slate-200 outline-none"
+                          className="w-18 bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-2 py-1 font-mono text-slate-200 outline-none"
                         />
                       </td>
                       <td className="py-2 px-3">
@@ -755,7 +952,7 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                               fim: Number(e.target.value) || 0,
                             })
                           }
-                          className="w-20 bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-2 py-1 font-mono text-slate-200 outline-none"
+                          className="w-18 bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-2 py-1 font-mono text-slate-200 outline-none"
                         />
                       </td>
                       <td className="py-2 px-3 font-mono text-slate-400">
@@ -784,7 +981,7 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                             atualizarCena(idx, { texto: e.target.value })
                           }
                           placeholder="Opcional (máx 3 palavras)"
-                          className={`w-full min-w-[150px] bg-[#0e1117] border rounded px-2 py-1 text-slate-200 outline-none ${
+                          className={`w-full min-w-[140px] bg-[#0e1117] border rounded px-2 py-1 text-slate-200 outline-none ${
                             qtdPalavras > 3
                               ? "border-amber-500/60"
                               : "border-slate-800 focus:border-[#ffc928]"
@@ -801,7 +998,7 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                               escala: Number(e.target.value) || 1,
                             })
                           }
-                          className="w-16 bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-2 py-1 font-mono text-slate-200 outline-none"
+                          className="w-14 bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-1.5 py-1 font-mono text-slate-200 outline-none"
                         />
                       </td>
                       <td className="py-2 px-3 text-right">
@@ -821,6 +1018,25 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
             </table>
           </div>
         </div>
+      )}
+
+      {cenaEditandoIdx !== null && config.cenas[cenaEditandoIdx] && (
+        <PersonagemPicker
+          projetoNome={projeto.nome}
+          formato={config.formato || projeto.formato}
+          indiceCena={cenaEditandoIdx}
+          cena={config.cenas[cenaEditandoIdx]}
+          temImagemFundo={imagensCenas.has(
+            extrairNomePng(
+              config.cenas[cenaEditandoIdx].fundo?.arquivo ||
+                config.cenas[cenaEditandoIdx].arquivo
+            )
+          )}
+          biblioteca={biblioteca}
+          onAtualizarCena={(patch) => atualizarCena(cenaEditandoIdx, patch)}
+          onBibliotecaAtualizada={(nova) => setBiblioteca(nova)}
+          onFechar={() => setCenaEditandoIdx(null)}
+        />
       )}
     </div>
   );

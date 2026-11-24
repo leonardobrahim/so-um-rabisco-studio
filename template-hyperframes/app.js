@@ -338,6 +338,139 @@ function aplicarLegendas(tl, layer, cena) {
     });
 }
 
+// ---------------------------------------------------------------- Camada do personagem
+const ALTURA_PERSONAGEM = { horizontal: 0.52, vertical: 0.34 };
+
+function criarCamadaPersonagem(p, ehHorizontal) {
+    const compW = ehHorizontal ? 1920 : 1080;
+    const compH = ehHorizontal ? 1080 : 1920;
+    const escala = Number(p.escala) > 0 ? Number(p.escala) : 1;
+    const lado = Math.round(compH * (ehHorizontal ? ALTURA_PERSONAGEM.horizontal : ALTURA_PERSONAGEM.vertical) * escala);
+    const margem = Math.round(compW * 0.03);
+    const posicao = p.posicao || "center";
+
+    let left;
+    if (posicao === "left" || posicao === "bottom-left") {
+        left = margem;
+    } else if (posicao === "right" || posicao === "bottom-corner") {
+        left = compW - lado - margem;
+    } else {
+        left = Math.round((compW - lado) / 2);
+    }
+
+    const box = document.createElement("div");
+    box.className = `cena-personagem pos-${posicao}`;
+    box.style.width = `${lado}px`;
+    box.style.height = `${lado}px`;
+    box.style.left = `${left}px`;
+    // Os quadros 512x512 deixam ~6% de margem na base: sobe/desce para os pés ficarem rente ao fim do quadro
+    box.style.bottom = `${-Math.round(lado * 0.04)}px`;
+
+    const inner = document.createElement("div");
+    inner.className = p.flip ? "personagem-inner flip" : "personagem-inner";
+
+    let sprite = null;
+    let pronto = Promise.resolve();
+    if (p.tipo === "sprite") {
+        const cfg = p.sprite || {};
+        const frames = Math.max(1, Number(cfg.frames) || 1);
+        const el = document.createElement("div");
+        el.className = "personagem-sprite";
+        el.style.backgroundImage = `url("${p.arquivo}")`;
+        el.style.backgroundSize = `${frames * lado}px ${lado}px`;
+        inner.appendChild(el);
+        sprite = { el, frames, fps: Math.max(1, Number(cfg.fps) || 8), lado };
+
+        const pre = new Image();
+        pre.src = p.arquivo;
+        if (pre.decode) pronto = pre.decode().catch(() => { });
+    } else {
+        const img = document.createElement("img");
+        img.src = p.arquivo;
+        img.alt = "Personagem";
+        inner.appendChild(img);
+        if (img.decode) pronto = img.decode().catch(() => { });
+    }
+
+    box.appendChild(inner);
+    return { box, sprite, pronto };
+}
+
+// O render do HyperFrames faz seek na timeline: nada de repeat infinito, o loop é finito pela duração da cena
+function repeticoesFinitas(duracao, ciclo) {
+    return Math.max(0, Math.ceil(duracao / ciclo) - 1);
+}
+
+function aplicarAnimacaoPersonagem(tl, camada, p, cena) {
+    const box = camada.box;
+    const inicio = Number(cena.inicio) || 0;
+    const fim = Number(cena.fim) || inicio + 1.5;
+    const duracao = Math.max(0.15, fim - inicio);
+    const entrada = Math.min(0.35, duracao * 0.4);
+    const animacao = String(p.animacao || "pop-in").toLowerCase();
+
+    tl.set(box, { autoAlpha: 1, x: 0, y: 0, xPercent: 0, yPercent: 0, scale: 1, rotation: 0 }, inicio);
+
+    // Sprite sheet (strip.png): quadros em loop com steps(), independente da animação de entrada
+    // Usa sub-timeline + tweenFromTo para cortar exatamente no fim da cena sem alongar a timeline principal.
+    if (camada.sprite) {
+        const { el, frames, fps, lado } = camada.sprite;
+        const ciclo = frames / fps;
+        const spriteTl = gsap.timeline({ paused: true });
+        spriteTl.fromTo(
+            el,
+            { backgroundPositionX: "0px" },
+            {
+                backgroundPositionX: `${-frames * lado}px`,
+                duration: ciclo,
+                ease: `steps(${frames})`,
+                repeat: repeticoesFinitas(duracao, ciclo),
+            },
+            0
+        );
+        tl.add(spriteTl.tweenFromTo(0, duracao, { ease: "none" }), inicio);
+    }
+
+    if (animacao === "pop-in") {
+        tl.fromTo(box, { scale: 0.2, opacity: 0 }, { scale: 1, opacity: 1, duration: entrada, ease: "back.out(1.8)" }, inicio);
+    } else if (animacao === "slide-in-left") {
+        tl.fromTo(box, { xPercent: -130 }, { xPercent: 0, duration: entrada, ease: "power3.out" }, inicio);
+    } else if (animacao === "slide-in-right") {
+        tl.fromTo(box, { xPercent: 130 }, { xPercent: 0, duration: entrada, ease: "power3.out" }, inicio);
+    } else if (animacao === "bounce") {
+        tl.fromTo(
+            box,
+            { yPercent: 45, opacity: 0 },
+            { yPercent: 0, opacity: 1, duration: Math.min(0.5, duracao * 0.6), ease: "bounce.out" },
+            inicio
+        );
+    } else if (animacao === "float") {
+        tl.fromTo(box, { opacity: 0, yPercent: 6 }, { opacity: 1, yPercent: 0, duration: entrada, ease: "power2.out" }, inicio);
+        const resto = duracao - entrada;
+        if (resto > 0.3) {
+            const meioCiclo = 0.55;
+            const repeticoes = Math.max(1, Math.round(resto / meioCiclo)) - 1;
+            tl.to(box, { yPercent: -3, duration: meioCiclo, ease: "sine.inOut", repeat: repeticoes, yoyo: true }, inicio + entrada);
+        }
+    } else if (animacao === "shake") {
+        tl.fromTo(box, { scale: 0.3, opacity: 0 }, { scale: 1, opacity: 1, duration: entrada, ease: "back.out(1.8)" }, inicio);
+        const passos = [
+            { x: -14, rotation: -2 },
+            { x: 14, rotation: 2 },
+            { x: -9, rotation: -1.2 },
+            { x: 9, rotation: 1.2 },
+            { x: 0, rotation: 0 },
+        ];
+        const tempoPasso = Math.min(0.05, Math.max(0.02, (duracao - entrada) / (passos.length * 2)));
+        passos.forEach((s, idx) => {
+            tl.to(box, { x: s.x, rotation: s.rotation, duration: tempoPasso, ease: "none" }, inicio + entrada + idx * tempoPasso);
+        });
+    }
+    // "none": o personagem só aparece (e o sprite, se houver, anima os quadros)
+
+    tl.set(box, { autoAlpha: 0 }, fim);
+}
+
 async function inicializarComposicao() {
     const resposta = await fetch("./cenas.json");
     const dados = await resposta.json();
@@ -368,16 +501,40 @@ async function inicializarComposicao() {
         wrapper.id = `cena-${index + 1}`;
 
         const img = document.createElement("img");
-        img.src = cena.arquivo;
+        img.src = (cena.fundo && cena.fundo.arquivo) || cena.arquivo;
         img.alt = `Cena ${index + 1}`;
-        wrapper.appendChild(img);
-        stage.appendChild(wrapper);
-
         if (img.decode) {
             imagensParaCarregar.push(img.decode().catch(() => { }));
         }
 
-        aplicarAnimacaoCena(mainTimeline, wrapper, cena, index, ehHorizontal);
+        // Cenas antigas (sem "personagem") ou com tipo "none" renderizam só a imagem fechada, como sempre
+        const personagem = cena.personagem;
+        const temPersonagem =
+            personagem && (personagem.tipo === "pose" || personagem.tipo === "sprite") && personagem.arquivo;
+
+        if (temPersonagem) {
+            // Cena em camadas: a câmera (zoom/ken-burns) age só no fundo; o personagem tem animação própria
+            const inicioCena = Number(cena.inicio) || 0;
+            const fimCena = Number(cena.fim) || inicioCena + 1.5;
+            const fundo = document.createElement("div");
+            fundo.className = "cena-fundo";
+            fundo.appendChild(img);
+            wrapper.appendChild(fundo);
+
+            const camada = criarCamadaPersonagem(personagem, ehHorizontal);
+            wrapper.appendChild(camada.box);
+            stage.appendChild(wrapper);
+            imagensParaCarregar.push(camada.pronto);
+
+            aplicarAnimacaoCena(mainTimeline, fundo, cena, index, ehHorizontal);
+            mainTimeline.set(wrapper, { autoAlpha: 1 }, inicioCena);
+            mainTimeline.set(wrapper, { autoAlpha: 0 }, fimCena);
+            aplicarAnimacaoPersonagem(mainTimeline, camada, personagem, cena);
+        } else {
+            wrapper.appendChild(img);
+            stage.appendChild(wrapper);
+            aplicarAnimacaoCena(mainTimeline, wrapper, cena, index, ehHorizontal);
+        }
         if (mostrarLegendas) {
             aplicarLegendas(mainTimeline, captionLayer, cena);
         }
