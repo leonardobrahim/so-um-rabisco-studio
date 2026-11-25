@@ -44,12 +44,15 @@ export interface CenaPersonagem {
   fonte?: string;
   asset?: string;
   posicao?: PersonagemPosicao;
+  x?: number;
+  y?: number;
   escala?: number;
   flip?: boolean;
   animacao?: PersonagemAnimacao;
   tags?: string[];
   sprite?: PersonagemSpriteConfig;
   arquivo?: string;
+  prompt?: string;
 }
 
 export interface BibliotecaPasta {
@@ -136,6 +139,8 @@ export interface CenaItem {
   texto: string;
   narracao?: string;
   prompt?: string;
+  prompt_fundo?: string;
+  prompt_personagem?: string;
   escala: number;
   fundo?: CenaFundo;
   personagem?: CenaPersonagem;
@@ -150,4 +155,64 @@ export interface CenasConfig {
   versao_schema?: number;
   mostrar_legendas?: boolean;
   cenas: CenaItem[];
+}
+
+export interface ComfyStatus {
+  online: boolean;
+  url: string;
+  dispositivo: string | null;
+  vram_total_mb: number | null;
+  vram_free_mb: number | null;
+  checkpoints: string[];
+  checkpoint_padrao: string | null;
+  erro: string | null;
+}
+
+export interface ComfyJobStatus {
+  status: "idle" | "running" | "done" | "error" | "canceled";
+  projeto: string;
+  outro_projeto_gerando: string | null;
+  checkpoint: string | null;
+  total_cenas: number;
+  concluidas: number;
+  cena_indice_atual: number | null;
+  ultima_cena_salva: string | null;
+  logs: string[];
+  erro: string | null;
+}
+
+export interface ComfyGerarPayload {
+  apenas_faltantes?: boolean;
+  indice_cena?: number;
+  checkpoint?: string;
+  steps?: number;
+  cfg?: number;
+  sampler_name?: string;
+  scheduler?: string;
+  largura?: number;
+  altura?: number;
+  seed?: number;
+  negativo_extra?: string;
+  workflow_api?: Record<string, unknown>;
+}
+
+export interface GeminiStatus {
+  configurado: boolean;
+  modelo_padrao: string;
+  modelos_fallback: string[];
+  mensagem: string | null;
+}
+
+export interface SeoThumbDados {
+  titulo_principal: string;
+  motivo_titulo: string;
+  titulos_alternativos: string[];
+  texto_na_thumb: string;
+  prompt_thumb_16_9: string;
+  prompt_thumb_sem_texto_16_9: string;
+  descricao_youtube: string;
+  tags_youtube: string[];
+  legenda_short: string;
+  hashtags_short: string;
+  comentario_fixado: string;
 }

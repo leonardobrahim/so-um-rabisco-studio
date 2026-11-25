@@ -15,9 +15,11 @@ import {
   Share2,
   Film,
   Download,
+  Sparkles,
 } from "lucide-react";
 import { api } from "../api";
-import type { ProjetoResumo } from "../types";
+import type { ProjetoResumo, SeoThumbDados } from "../types";
+import { useProgresso } from "./BarraProgressoGlobal";
 
 interface Props {
   projeto: ProjetoResumo;
@@ -82,7 +84,7 @@ function notificarConclusao(nomeProjeto: string, sucesso: boolean) {
         sucesso ? "Vídeo pronto! — Só um Rabisco" : "Erro ao gerar vídeo",
         {
           body: sucesso
-            ? `O vídeo "${nomeProjeto}" terminou de ser gerado no HyperFrames.`
+            ? `O vídeo "${nomeProjeto}" terminou de ser gerado no Remotion.`
             : `Falha ao renderizar "${nomeProjeto}". Confira os detalhes no Studio.`,
         }
       );
@@ -93,6 +95,7 @@ function notificarConclusao(nomeProjeto: string, sucesso: boolean) {
 }
 
 export function TabThumbRender({ projeto, onAtualizado }: Props) {
+  const { iniciarTarefaEstimada } = useProgresso();
   const isShort = projeto.tipo === "short";
   const tituloPadrao =
     projeto.nome
@@ -118,6 +121,8 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
   const [comLegenda, setComLegenda] = useState(true);
   const [qualidade, setQualidade] = useState<"draft" | "looks" | "delivery">("looks");
   const [renderStatus, setRenderStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [progressoRender, setProgressoRender] = useState(0);
+  const [etapaRender, setEtapaRender] = useState("");
   const [ultimaLinhaRender, setUltimaLinhaRender] = useState<string | null>(null);
   const [existeVideo, setExisteVideo] = useState(false);
   const [tamanhoVideoBytes, setTamanhoVideoBytes] = useState<number | null>(null);
@@ -125,6 +130,11 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
   const [videoCacheBust, setVideoCacheBust] = useState<number>(() => Date.now());
   const [renderLog, setRenderLog] = useState<string | null>(null);
   const [renderErro, setRenderErro] = useState<string | null>(null);
+  const [promptThumbGerado, setPromptThumbGerado] = useState<string>("");
+  const [seoDados, setSeoDados] = useState<SeoThumbDados | null>(null);
+  const [seoMarkdown, setSeoMarkdown] = useState<string>("");
+  const [gerandoSeo, setGerandoSeo] = useState(false);
+  const [seoErro, setSeoErro] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const titlePreviewRef = useRef<HTMLDivElement>(null);
@@ -133,8 +143,26 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
     let ativo = true;
     setRenderLog(null);
     setRenderErro(null);
+    setSeoErro(null);
+    setSeoDados(null);
+    setPromptThumbGerado("");
+    setSeoMarkdown("");
     setDuracao(formatarDuracao(projeto.duracao_total));
     setTitulo(tituloPadrao);
+
+    api
+      .lerSeoThumb(projeto.nome)
+      .then((res) => {
+        if (!ativo) return;
+        setSeoMarkdown(res.markdown || "");
+        const match = res.markdown?.match(
+          /## Prompt da Thumbnail[^\n]*\n```text\n([\s\S]*?)```/
+        );
+        if (match?.[1]) {
+          setPromptThumbGerado(match[1].trim());
+        }
+      })
+      .catch(() => {});
 
     api
       .lerMeta(projeto.nome)
@@ -151,6 +179,8 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
       .then((st) => {
         if (!ativo) return;
         setRenderStatus(st.status);
+        setProgressoRender(st.progresso ?? 0);
+        setEtapaRender(st.etapa ?? "");
         setUltimaLinhaRender(st.ultima_linha);
         setExisteVideo(st.existe_video);
         setTamanhoVideoBytes(st.tamanho_bytes);
@@ -173,18 +203,20 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
         .then((st) => {
           if (!ativo) return;
           setRenderStatus(st.status);
+          setProgressoRender(st.progresso ?? 0);
+          setEtapaRender(st.etapa ?? "");
           setUltimaLinhaRender(st.ultima_linha);
           setExisteVideo(st.existe_video);
           setTamanhoVideoBytes(st.tamanho_bytes);
           setCaminhoVideo(st.caminho_video);
           if (st.status === "done") {
             setVideoCacheBust(Date.now());
-            setRenderLog("Vídeo MP4 gerado com sucesso pelo HyperFrames!");
+            setRenderLog("Vídeo MP4 gerado com sucesso pelo Remotion!");
             setRenderErro(null);
             notificarConclusao(projeto.nome, true);
             onAtualizado();
           } else if (st.status === "error") {
-            setRenderErro(st.erro || "Erro ao renderizar vídeo no HyperFrames.");
+            setRenderErro(st.erro || "Erro ao renderizar vídeo no Remotion.");
             notificarConclusao(projeto.nome, false);
           }
         })
@@ -261,10 +293,42 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
     }
   }
 
-  const promptThumbPaperBillions = `Dramatic 2D graphic novel cartoon YouTube thumbnail about "${titulo.trim()}". Close-up on the left of a minimalist cartoon character with a large rounded pale-white head, messy spiky black hair, wearing a vibrant yellow hoodie (#FFC928), extreme shocked and panicked expression with wide eyes, small pupils and sweat drops. On the right, a glowing symbolic object casting intense neon rim light onto the character's hair and hoodie. Detailed dark navy atmospheric background (#050811) with subtle blur, thick black outlines, cel-shading, dramatic lighting, 16:9 aspect ratio.`;
+  async function handleGerarSeoThumb() {
+    setGerandoSeo(true);
+    setSeoErro(null);
+    const finalizar = iniciarTarefaEstimada({
+      id: `seo-${projeto.nome}`,
+      titulo: `Gerando Título, SEO & Thumb (${projeto.nome})`,
+      etapa: "Criando título, tags e prompt Paper Billions no Gemini",
+      projetoNome: projeto.nome,
+      aba: "thumb-render",
+      duracaoEstimadaMs: 12000,
+    });
+    try {
+      const res = await api.gerarSeoThumb(projeto.nome, projeto.tipo);
+      setSeoDados(res.dados);
+      setSeoMarkdown(res.markdown);
+      setPromptThumbGerado(res.dados.prompt_thumb_16_9);
+      if (res.dados.titulo_principal) {
+        setTitulo(res.dados.titulo_principal);
+      }
+      if (res.dados.hashtags_short) {
+        setHashtags(res.dados.hashtags_short);
+      }
+      onAtualizado();
+    } catch (err) {
+      setSeoErro(
+        err instanceof Error ? err.message : "Erro ao gerar SEO e Thumb no Gemini"
+      );
+    } finally {
+      finalizar();
+      setGerandoSeo(false);
+    }
+  }
 
   async function copiarPromptThumb() {
-    await navigator.clipboard.writeText(promptThumbPaperBillions);
+    if (!promptThumbGerado) return;
+    await navigator.clipboard.writeText(promptThumbGerado);
     setCopiadoPromptThumb(true);
     setTimeout(() => setCopiadoPromptThumb(false), 1800);
   }
@@ -312,7 +376,7 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
                 Copia <code>cenas.json</code>, áudio, fundos e poses/sprites usados para{" "}
-                <code>template-hyperframes/</code> via{" "}
+                <code>template-remotion/public/</code> via{" "}
                 <code>scripts/preparar_render.py</code>.
               </p>
             </div>
@@ -348,11 +412,11 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
                 }
                 disabled={renderStatus === "running"}
                 className="bg-[#0b0d12] border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-slate-200 outline-none cursor-pointer"
-                title="Qualidade do render HyperFrames"
+                title="Qualidade do render Remotion"
               >
-                <option value="draft">Rápido (draft)</option>
-                <option value="looks">Padrão (looks)</option>
-                <option value="delivery">Máxima (delivery)</option>
+                <option value="draft">Rápido (CRF 26)</option>
+                <option value="looks">Padrão (CRF 18)</option>
+                <option value="delivery">Máxima (CRF 12)</option>
               </select>
               <button
                 type="button"
@@ -378,7 +442,7 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
                   try {
                     await api.renderizarVideo(projeto.nome, comLegenda, qualidade);
                     setRenderStatus("running");
-                    setUltimaLinhaRender("Preparando projeto e iniciando HyperFrames...");
+                    setUltimaLinhaRender("Preparando projeto e iniciando Remotion...");
                   } catch (err) {
                     setRenderErro(
                       err instanceof Error ? err.message : "Erro ao iniciar renderização"
@@ -445,16 +509,29 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
           </div>
 
           {renderStatus === "running" && (
-            <div className="px-3.5 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-center gap-2.5">
-              <Loader2 className="w-4 h-4 animate-spin shrink-0 text-[#ffc928]" />
-              <div className="min-w-0">
-                <div className="font-semibold">Renderizando vídeo MP4 com HyperFrames...</div>
-                {ultimaLinhaRender && (
-                  <div className="text-[11px] text-amber-300/80 truncate">
-                    {ultimaLinhaRender}
-                  </div>
-                )}
+            <div className="px-3.5 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Loader2 className="w-4 h-4 animate-spin shrink-0 text-[#ffc928]" />
+                  <span className="font-semibold truncate">
+                    {etapaRender || "Renderizando vídeo MP4 com Remotion..."}
+                  </span>
+                </div>
+                <span className="font-mono font-bold text-[#ffc928] shrink-0">
+                  {progressoRender}%
+                </span>
               </div>
+              <div className="w-full h-2 bg-black/40 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-[#ffc928] transition-all duration-300"
+                  style={{ width: `${Math.max(2, Math.min(100, progressoRender))}%` }}
+                />
+              </div>
+              {ultimaLinhaRender && (
+                <div className="text-[11px] text-amber-300/75 truncate">
+                  {ultimaLinhaRender}
+                </div>
+              )}
             </div>
           )}
 
@@ -673,31 +750,85 @@ export function TabThumbRender({ projeto, onAtualizado }: Props) {
                 </div>
               </div>
 
-              {/* Prompt de Thumb Paper Billions automático */}
-              <div className="bg-[#0e1117] border border-slate-800 rounded-xl p-3 space-y-2">
-                <div className="flex items-center justify-between">
+              {/* Prompt de Thumb Paper Billions e SEO via Gemini */}
+              <div className="bg-[#0e1117] border border-slate-800 rounded-xl p-3 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                    Prompt de Thumbnail (Paper Billions 16:9)
+                    Prompt de Thumbnail &amp; SEO (Gemini Paper Billions 16:9)
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => void copiarPromptThumb()}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-200 font-medium cursor-pointer"
-                  >
-                    {copiadoPromptThumb ? (
-                      <>
-                        <Check className="w-3 h-3 text-emerald-400" /> Copiado
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3 h-3 text-[#ffc928]" /> Copiar Prompt
-                      </>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={gerandoSeo}
+                      onClick={() => void handleGerarSeoThumb()}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#ffc928] hover:bg-[#ffd452] disabled:opacity-50 text-[11px] text-black font-semibold cursor-pointer"
+                    >
+                      {gerandoSeo ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-3 h-3" />
+                      )}
+                      {promptThumbGerado ? "Regerar com Gemini" : "Gerar com Gemini"}
+                    </button>
+                    {promptThumbGerado && (
+                      <button
+                        type="button"
+                        onClick={() => void copiarPromptThumb()}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-200 font-medium cursor-pointer"
+                      >
+                        {copiadoPromptThumb ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-400" /> Copiado
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3 text-[#ffc928]" /> Copiar Prompt
+                          </>
+                        )}
+                      </button>
                     )}
-                  </button>
+                  </div>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  {promptThumbPaperBillions}
-                </p>
+                {seoErro && (
+                  <p className="text-[11px] text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-lg px-2.5 py-1.5">
+                    {seoErro}
+                  </p>
+                )}
+                {promptThumbGerado ? (
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    {promptThumbGerado}
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-500 italic">
+                    Nenhum prompt de thumbnail gerado ainda. Clique em &ldquo;Gerar com Gemini&rdquo; para criar título, prompt exclusivo 16:9, descrição, tags e comentário fixado a partir da narração.
+                  </p>
+                )}
+                {seoDados && (
+                  <div className="pt-2 border-t border-slate-800/80 space-y-1.5 text-[11px] text-slate-400">
+                    <div>
+                      <strong className="text-slate-300">Texto na Thumb:</strong>{" "}
+                      <span className="text-[#ffc928] font-bold">{seoDados.texto_na_thumb}</span>
+                    </div>
+                    <div>
+                      <strong className="text-slate-300">Alternativas:</strong>{" "}
+                      {seoDados.titulos_alternativos.join(" • ")}
+                    </div>
+                    <div>
+                      <strong className="text-slate-300">Tags:</strong>{" "}
+                      {seoDados.tags_youtube.join(", ")}
+                    </div>
+                  </div>
+                )}
+                {!seoDados && seoMarkdown.trim().length > 40 && (
+                  <details className="pt-1 text-[11px] text-slate-400">
+                    <summary className="cursor-pointer text-slate-300 hover:text-[#ffc928]">
+                      Ver 05-seo-e-thumb.md completo
+                    </summary>
+                    <pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap text-[10px] text-slate-400 bg-black/30 p-2 rounded">
+                      {seoMarkdown}
+                    </pre>
+                  </details>
+                )}
               </div>
             </>
           )}

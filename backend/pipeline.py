@@ -1,944 +1,788 @@
+"""Pipeline de geração 100% via Gemini Structured Outputs (roteiro, storyboard, cenas.json, personagem e SEO)."""
+from __future__ import annotations
+
 import json
-import math
-import os
 import re
-import unicodedata
-import urllib.error
-import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from .personagem import ANIMACOES, POSICOES, SeletorPersonagem
+from pydantic import BaseModel, Field
 
-SCHEMA_VERSAO = 2
-
-# O prompt de imagem descreve APENAS o fundo/objeto: o personagem entra depois, em camada (PNG transparente).
-ESTILO_FUNDO_BASE = (
-    "empty scene, no people, no characters, minimalist 2d cartoon background, "
-    "thick black ink outlines, flat colors"
+from backend.gemini_client import (
+    ROOT_DIR,
+    gerar_estruturado,
+    ler_env_valor,
+)
+from backend.personagem import (
+    FONTE_PADRAO,
+    listar_biblioteca,
+    personagem_vazio,
 )
 
-STYLE_SUFFIX_SHORT_TEMPLATE = (
-    "Single highlighted object or icon centered in the frame, "
-    + ESTILO_FUNDO_BASE
-    + ", hand-drawn doodle and marker aesthetic, slightly irregular lines, "
-    "pure solid white background (#FFFFFF), no hands, no body parts, no photorealism, "
-    "no 3D, no heavy gradients, no realistic shadows, no excessive detail, {aspect} aspect ratio."
+# Mantido para compatibilidade com backend/comfyui.py
+_ler_env_valor = ler_env_valor
+
+AGENT_RULES_DIR = ROOT_DIR / ".agent" / "rules"
+
+DNA_ARTISTICO_OBRIGATORIO = (
+    "Minimalist 2D cartoon doodle illustration, hand-drawn sketch aesthetic with thick clean black marker outlines "
+    "and flat colors, slightly irregular hand-crafted lines, simple expressive composition. "
+    "Strictly NO photorealism, NO 3D rendering, NO heavy gradients, NO realistic cast shadows, NO complex textures."
+)
+PROMPT_PREFIXO_PADRAO = DNA_ARTISTICO_OBRIGATORIO
+
+SUFIXO_FUNDO_LONGO = (
+    "No characters or people in the scene. "
+    "Soft muted pastel colors only, no overly bright, saturated, or neon colors."
 )
 
-STYLE_SUFFIX_LONGO_TEMPLATE = (
-    ESTILO_FUNDO_BASE
-    + ", hand-drawn doodle and marker aesthetic, slightly irregular lines, "
-    "full illustrated background with soft muted pastel or desaturated colors, "
-    "subtle scenery and objects matching the scene, uncluttered lower foreground, "
-    "strictly avoid overly saturated or harsh bright primary background colors "
-    "(no loud neon blue, bright red, or harsh yellow walls/skies), no hands, no body parts, "
-    "no photorealism, no 3D, no heavy gradients, no realistic shadows, no excessive detail, "
-    "{aspect} aspect ratio."
+DESCRICAO_PROTAGONISTA = (
+    "Compact cartoon character whose large rounded pale-white head with subtle light-blue shading on the left side "
+    "takes up one-third of his height, messy irregular spiky black hair, simple oval black eyes, minimalist expressive face, "
+    "wearing a bright yellow hoodie (#FFC928), dark navy blue pants, and low white sneakers with black details."
 )
 
+DESCRICAO_SECUNDARIA_BIA = (
+    "Cartoon girl with brown hair tied in a ponytail, green tank top, black leggings, "
+    "holding a small notebook, same 2D hand-drawn marker doodle style."
+)
 
-def _obter_sufixo_estilo(tipo: str, formato: str) -> str:
-    template = STYLE_SUFFIX_SHORT_TEMPLATE if tipo == "short" else STYLE_SUFFIX_LONGO_TEMPLATE
-    return template.format(aspect=formato)
-
-# Regras semânticas PT-BR -> fundo/objeto em inglês (SEM pessoas) + efeito de câmera + tags de pose do personagem
-# Usado apenas como fallback local quando não há Gemini API; usa match por palavra inteira e bloqueio global.
-REGRAS_VISUAIS: list[tuple[tuple[str, ...], str, str, tuple[str, ...]]] = [
-    (
-        ("ansioso", "ansiedade", "estressado", "estresse", "panico", "surto", "desespero", "nervoso", "medo"),
-        "Jagged dark stress scribbles and tiny lightning doodles scattered over a plain pastel wall",
-        "shake",
-        ("ansioso", "panico", "medo"),
-    ),
-    (
-        ("celular", "smartphone", "telefone", "notificacao", "notificacoes", "instagram", "tiktok", "mensagem"),
-        "A glowing smartphone floating in the center with notification bubble doodles popping around it",
-        "pop-in",
-        ("celular", "surpreso", "olhando"),
-    ),
-    (
-        ("dinheiro", "salario", "boleto", "rico", "loteria", "pagar", "comprar", "gastar", "banco", "carteira"),
-        "An open empty wallet with floating coin doodles and a few cobwebs",
-        "pop-in",
-        ("preocupado", "duvida", "dinheiro"),
-    ),
-    (
-        ("relogio", "calendario", "semana", "mes", "meses", "cronometro"),
-        "A minimalist wall calendar and a big ticking clock doodle with floating motion lines",
-        "zoom-in",
-        ("olhando", "pensativo", "relogio"),
-    ),
-    (
-        ("trabalho", "emprego", "chefe", "reuniao", "escritorio", "computador", "notebook", "tarefa", "meta", "produtivo"),
-        "A minimalist desk with an open laptop and tall stacks of paper piled around it",
-        "slide-up",
-        ("cansado", "trabalho", "sentado"),
-    ),
-    (
-        ("prova", "estudar", "estudo", "livro", "livros", "faculdade", "escola"),
-        "A pile of exam papers, books and a pencil on a minimalist desk",
-        "zoom-in",
-        ("nervoso", "estudando", "suor"),
-    ),
-    (
-        ("cerebro", "mente", "dopamina", "evolucao", "ancestral", "habito", "vicio"),
-        "A glowing cartoon brain doodle with lightning sparks floating over a plain pastel wall",
-        "pop-in",
-        ("pensativo", "ideia", "duvida"),
-    ),
-    (
-        ("feliz", "alegria", "conseguiu", "vitoria", "trofeu", "sucesso", "comemorar", "sorrir"),
-        "Confetti, stars and a golden trophy doodle on a plain pastel wall",
-        "pop-in",
-        ("feliz", "comemorando", "animado"),
-    ),
-    (
-        ("dormir", "sono", "cansado", "exausto", "descansar", "cama", "travesseiro", "madrugada", "acordar"),
-        "A minimalist bed with a crumpled blanket and floating Zzz doodles under a crescent moon",
-        "zoom-out",
-        ("cansado", "dormindo", "exausto"),
-    ),
-    (
-        ("espelho", "reflexo"),
-        "A minimalist standing mirror in an otherwise empty room",
-        "zoom-in",
-        ("apontando", "olhando", "duvida"),
-    ),
-    (
-        ("procrastinar", "procrastinacao", "preguica", "sofa", "despertador"),
-        "A cozy sofa with a loudly ringing alarm clock doodle floating nearby",
-        "slide-up",
-        ("preguica", "deitado", "relaxado"),
-    ),
+EfeitoCenaLiteral = Literal["pop-in", "zoom-in", "zoom-out", "slide-up", "shake", "cut"]
+CorLegendaLiteral = Literal["branco", "canal", "alerta"]
+PosicaoPersonagemLiteral = Literal["center", "left", "right", "bottom-corner", "bottom-left"]
+AnimacaoPersonagemLiteral = Literal[
+    "pop-in", "slide-in-left", "slide-in-right", "float", "bounce", "shake", "none"
 ]
-
-STOPWORDS_PT = {
-    "a", "o", "as", "os", "um", "uma", "uns", "umas", "de", "do", "da", "dos", "das",
-    "em", "no", "na", "nos", "nas", "por", "para", "pra", "pro", "com", "sem", "sob",
-    "e", "ou", "mas", "que", "se", "como", "quando", "onde", "porque", "por que",
-    "voce", "você", "eu", "ele", "ela", "nos", "nós", "eles", "elas", "meu", "minha",
-    "seu", "sua", "isso", "isto", "aquilo", "esse", "essa", "este", "esta", "ser",
-    "estar", "ter", "fazer", "ir", "foi", "era", "vai", "ja", "já", "muito", "mais",
-    "menos", "nao", "não", "sim", "ai", "aí", "entao", "então", "só", "so", "ate", "até",
-    "dia", "coisa", "tudo", "nada", "bem", "mal", "todo", "toda", "todos", "todas",
-    "gente", "aqui", "ali", "lá", "la", "ainda", "mesmo", "mesma", "tambem", "também",
-}
+PersonagemQuemLiteral = Literal["protagonista", "secundaria_bia"]
+PersonagemEnquadramentoLiteral = Literal["close-up", "medium shot", "full body"]
 
 
-def _normalizar_ascii(texto: str) -> str:
-    return (
-        unicodedata.normalize("NFKD", texto.lower())
-        .encode("ascii", "ignore")
-        .decode("ascii")
-    )
+# ---------------------------------------------------------------------------
+# Schemas Pydantic para Structured Outputs (response_schema)
+# ---------------------------------------------------------------------------
 
 
-def _formatar_mm_ss(segundos: float) -> str:
-    minutos = int(max(0.0, segundos) // 60)
-    segs = int(max(0.0, segundos) % 60)
-    return f"[{minutos:02d}:{segs:02d}]"
+class LegendaIndiceSchema(BaseModel):
+    texto: str = Field(description="Trecho exato das palavras da legenda (1 a 4 palavras, sem cortar números).")
+    palavra_inicio: int = Field(description="Índice 0-based da primeira palavra deste bloco no trecho recebido.")
+    palavra_fim: int = Field(description="Índice 0-based da última palavra deste bloco no trecho recebido.")
+    cor: CorLegendaLiteral = Field(description="Destaque visual: 'branco', 'canal' (amarelo) ou 'alerta' (vermelho).")
 
 
-def inferir_tipo_projeto(pasta: Path, config_cenas: dict[str, Any] | None = None) -> str:
-    meta_path = pasta / "projeto.json"
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            if meta.get("tipo") in ("longo", "short"):
-                return str(meta["tipo"])
-        except Exception:
-            pass
-
-    if config_cenas and config_cenas.get("formato") == "9:16":
-        return "short"
-
-    cenas_path = pasta / "cenas.json"
-    if cenas_path.exists():
-        try:
-            dados = json.loads(cenas_path.read_text(encoding="utf-8"))
-            if dados.get("formato") == "9:16":
-                return "short"
-        except Exception:
-            pass
-
-    nome_norm = _normalizar_ascii(pasta.name)
-    if any(tag in nome_norm for tag in ("short", "shorts", "reel", "reels", "tiktok")):
-        return "short"
-
-    return "longo"
-
-
-def ler_ou_criar_meta_projeto(pasta: Path) -> dict[str, Any]:
-    meta_path = pasta / "projeto.json"
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            if meta.get("tipo") in ("longo", "short"):
-                return meta
-        except Exception:
-            pass
-
-    tipo = inferir_tipo_projeto(pasta)
-    meta = {
-        "tipo": tipo,
-        "formato": "9:16" if tipo == "short" else "16:9",
-    }
-    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    return meta
-
-
-def salvar_meta_projeto(pasta: Path, tipo: str, extras: dict[str, Any] | None = None) -> dict[str, Any]:
-    meta_path = pasta / "projeto.json"
-    atual: dict[str, Any] = {}
-    if meta_path.exists():
-        try:
-            atual = json.loads(meta_path.read_text(encoding="utf-8"))
-        except Exception:
-            atual = {}
-
-    tipo_limpo = "short" if tipo == "short" else "longo"
-    atual["tipo"] = tipo_limpo
-    atual["formato"] = "9:16" if tipo_limpo == "short" else "16:9"
-    if extras:
-        atual.update(extras)
-
-    meta_path.write_text(json.dumps(atual, ensure_ascii=False, indent=2), encoding="utf-8")
-    return atual
-
-
-def limpar_prefixo_timestamp(prompt: str) -> str:
-    """Remove prefixo [MM:SS] do prompt antes de enviar para geradores de imagem."""
-    return re.sub(r"^\[\d{2}:\d{2}\]\s*", "", prompt.strip())
-
-
-def _escolher_cor_legenda(texto: str, indice_bloco: int) -> str:
-    norm = _normalizar_ascii(texto)
-    palavras_alerta = (
-        "nao", "nunca", "ninguem", "problema", "ansioso", "estressado",
-        "panico", "crise", "erro", "pior", "zero", "impossivel", "exausto",
-        "cansado", "pare", "cuidado",
-    )
-    if "!" in texto or any(p in norm for p in palavras_alerta):
-        return "alerta"
-    if "?" in texto or re.search(r"\d", texto) or indice_bloco % 3 == 1:
-        return "canal"
-    return "branco"
-
-
-def _gerar_blocos_legenda(
-    fala: str,
-    inicio: float,
-    fim: float,
-    palavras_ts: list[dict[str, Any]] | None = None,
-) -> list[dict[str, Any]]:
-    """
-    Quebra a fala real em micro-blocos de 1 a 3 palavras (0.4s a 0.9s)
-    sincronizados palavra por palavra ao longo de [inicio, fim].
-    """
-    if palavras_ts:
-        grupos_ts: list[list[dict[str, Any]]] = []
-        grupo_atual: list[dict[str, Any]] = []
-        for idx, w in enumerate(palavras_ts):
-            grupo_atual.append(w)
-            g_ini = float(grupo_atual[0]["inicio"])
-            g_fim = float(w["fim"])
-            dur = g_fim - g_ini
-            pontuacao = str(w["palavra"]).strip().endswith((",", ".", "?", "!", ";", ":"))
-            eh_ultima = idx == len(palavras_ts) - 1
-
-            if eh_ultima or len(grupo_atual) >= 3 or (dur >= 0.45 and (pontuacao or len(grupo_atual) >= 2)) or dur >= 0.85:
-                grupos_ts.append(grupo_atual)
-                grupo_atual = []
-
-        # Garante zero lacunas dentro da cena
-        resultado: list[dict[str, Any]] = []
-        for idx, g in enumerate(grupos_ts):
-            b_ini = inicio if idx == 0 else resultado[-1]["fim"]
-            if idx == len(grupos_ts) - 1:
-                b_fim = round(fim, 2)
-            else:
-                prox_ini = float(grupos_ts[idx + 1][0]["inicio"])
-                b_fim = round(max(b_ini + 0.25, min(fim - 0.15, (float(g[-1]["fim"]) + prox_ini) / 2.0)), 2)
-            txt = " ".join(str(x["palavra"]).strip() for x in g).strip()
-            if txt:
-                resultado.append(
-                    {
-                        "texto": txt,
-                        "inicio": round(b_ini, 2),
-                        "fim": max(round(b_ini + 0.2, 2), b_fim),
-                        "cor": _escolher_cor_legenda(txt, idx),
-                    }
-                )
-        if resultado:
-            resultado[-1]["fim"] = round(fim, 2)
-        return resultado
-
-    palavras = fala.strip().split()
-    if not palavras:
-        return []
-
-    dur_total = max(0.25, fim - inicio)
-    max_palavras = 3 if dur_total >= 1.2 else 2
-    grupos: list[list[str]] = []
-    i = 0
-    while i < len(palavras):
-        bloco = palavras[i : i + max_palavras]
-        i += max_palavras
-        grupos.append(bloco)
-
-    total_palavras = len(palavras)
-    cursor = inicio
-    resultado = []
-    for idx, grupo in enumerate(grupos):
-        if idx == len(grupos) - 1:
-            b_fim = round(fim, 2)
-        else:
-            proporcao = len(grupo) / total_palavras
-            b_fim = round(cursor + dur_total * proporcao, 2)
-        txt = " ".join(grupo)
-        resultado.append(
-            {
-                "texto": txt,
-                "inicio": round(cursor, 2),
-                "fim": max(round(cursor + 0.2, 2), b_fim),
-                "cor": _escolher_cor_legenda(txt, idx),
-            }
+class CenaTimestampsSchema(BaseModel):
+    palavra_inicio: int = Field(description="Índice 0-based da primeira palavra da cena no array de palavras.")
+    palavra_fim: int = Field(description="Índice 0-based da última palavra da cena no array de palavras.")
+    efeito: EfeitoCenaLiteral = Field(description="Efeito de câmera variando o ritmo visual.")
+    escala_fundo: float = Field(description="Escala inicial do fundo (entre 1.0 e 1.08).")
+    fundo_descricao: str = Field(
+        description=(
+            "Descrição em INGLÊS do cenário/ambiente (sem pessoas e sem o protagonista, com espaço livre no centro/inferior). "
+            "Para 16:9: cenário completo em tons pastéis/dessaturados ligado à fala. Para 9:16: fundo branco sólido limpo com no máximo 1 objeto simples."
         )
-        cursor = b_fim
-
-    return resultado
-
-
-def _contem_palavra(texto_norm: str, termo: str) -> bool:
-    """Casamento por palavra inteira (evita falsos positivos como 'apagar' bater em 'pagar')."""
-    termo_norm = _normalizar_ascii(termo).strip()
-    if not termo_norm:
-        return False
-    return bool(re.search(r"\b" + re.escape(termo_norm) + r"\b", texto_norm))
-
-
-def _tags_pose_por_fala(fala: str) -> list[str]:
-    """Tags de emoção/pose desejadas para o personagem, derivadas da fala do corte."""
-    norm = _normalizar_ascii(fala)
-    for keywords, _fundo, _efeito, tags in REGRAS_VISUAIS:
-        if any(_contem_palavra(norm, k) for k in keywords):
-            return list(tags)
-    if "?" in fala:
-        return ["duvida", "confuso", "curioso"]
-    if "!" in fala:
-        return ["surpreso", "chocado", "animado"]
-    if any(_contem_palavra(norm, k) for k in ("nao", "nunca", "mas", "porem", "errado", "problema")):
-        return ["cetico", "negando", "bravo"]
-    return []
+    )
+    personagem_quem: PersonagemQuemLiteral = Field(
+        description="Use 'protagonista' na maioria das cenas ou 'secundaria_bia' apenas quando a cena pedir outra pessoa."
+    )
+    personagem_enquadramento: PersonagemEnquadramentoLiteral = Field(
+        description="Varie entre 'close-up', 'medium shot' e 'full body' conforme a emoção da fala."
+    )
+    personagem_acao_descricao: str = Field(
+        description=(
+            "Descrição em INGLÊS da ação física, expressão facial exagerada ou metáfora cômica traduzindo a fala exata desta cena "
+            "(textos em placas/cadernos/etiquetas em Português do Brasil; sem repetir pose da cena anterior)."
+        )
+    )
+    legendas: list[LegendaIndiceSchema] = Field(
+        description="Micro-blocos de legenda cobrindo todas as palavras da cena em ordem."
+    )
+    personagem_asset_id: str = Field(
+        description="ID exato do asset escolhido na biblioteca enviada, ou string vazia se nenhum asset existir."
+    )
+    personagem_posicao: PosicaoPersonagemLiteral
+    personagem_escala: float = Field(description="Escala do personagem entre 0.75 e 1.15.")
+    personagem_flip: bool = Field(description="Espelhamento horizontal orgânico para variar direção.")
+    personagem_animacao: AnimacaoPersonagemLiteral
+    tags: list[str] = Field(description="Tags curtas de emoção/ação em português escolhidas para a cena.")
 
 
-_FUNDOS_NEUTROS_FALLBACK = [
-    "A plain soft pastel living room wall with a simple framed picture and floating thought doodles",
-    "A clean pastel minimalist room corner with a small wooden table and a simple lamp",
-    "An uncluttered soft sky-blue doodle backdrop with subtle clouds and floating comic lines",
-    "A cozy quiet room interior with soft pastel curtains and a window showing tiny stars",
-    "A minimal desk surface with a blank notebook and a floating question bubble doodle",
-    "An empty hallway with two closed doors and subtle perspective sketch lines",
-]
+class StoryboardTimestampsSchema(BaseModel):
+    cenas: list[CenaTimestampsSchema]
 
 
-def _escolher_fundo_efeito_tags(
-    fala: str,
-    indice: int,
-    fundos_usados: set[str] | None = None,
-) -> tuple[str, str, list[str]]:
-    norm = _normalizar_ascii(fala)
-    usados = fundos_usados if fundos_usados is not None else set()
-
-    for keywords, fundo, efeito, tags in REGRAS_VISUAIS:
-        if any(_contem_palavra(norm, k) for k in keywords) and fundo not in usados:
-            usados.add(fundo)
-            return fundo, efeito, list(tags)
-
-    base = _FUNDOS_NEUTROS_FALLBACK[(indice - 1) % len(_FUNDOS_NEUTROS_FALLBACK)]
-    if "?" in fala:
-        fundo = f"{base}, with a bold hand-drawn question mark doodle floating in the upper area"
-        efeito = "pop-in"
-    elif "!" in fala:
-        fundo = f"{base}, with sharp hand-drawn exclamation burst lines"
-        efeito = "shake"
-    elif any(_contem_palavra(norm, k) for k in ("nao", "nunca", "mas", "porem", "errado", "problema")):
-        fundo = f"{base}, with a subtle red hand-drawn X doodle floating on the side"
-        efeito = "slide-up"
-    else:
-        fundo = base
-        efeito = "zoom-in" if indice % 2 == 1 else "zoom-out"
-
-    if fundo in usados:
-        fundo = f"{fundo}, scene angle {indice}"
-    usados.add(fundo)
-    return fundo, efeito, _tags_pose_por_fala(fala)
+class LegendaTextoSchema(BaseModel):
+    texto: str = Field(description="Micro-bloco de 1 a 4 palavras mantendo números e sentido intactos.")
+    cor: CorLegendaLiteral
 
 
-def _ler_env_valor(raiz: Path, chave_nome: str) -> str | None:
-    valor_env = os.environ.get(chave_nome, "").strip()
-    if valor_env:
-        return valor_env
-
-    env_path = raiz / ".env"
-    if env_path.exists():
-        for linha in env_path.read_text(encoding="utf-8").splitlines():
-            linha = linha.strip()
-            if not linha or linha.startswith("#"):
-                continue
-            if linha.startswith(f"{chave_nome}="):
-                valor = linha.split("=", 1)[1].strip().strip('"').strip("'")
-                if valor:
-                    return valor
-    return None
-
-
-def _obter_gemini_api_key(raiz: Path) -> str | None:
-    return _ler_env_valor(raiz, "GEMINI_API_KEY")
-
-
-GEMINI_MODELOS_PADRAO = [
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3-flash-preview",
-    "gemini-3.8-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-flash-lite-latest",
-]
+class CenaNarracaoSchema(BaseModel):
+    texto: str = Field(description="Trecho exato da narração falado nesta cena.")
+    duracao_segundos: float = Field(description="Duração estimada da cena respeitando o formato (16:9 ou 9:16).")
+    efeito: EfeitoCenaLiteral
+    escala_fundo: float = Field(description="Escala entre 1.0 e 1.08.")
+    fundo_descricao: str = Field(
+        description=(
+            "Descrição em INGLÊS do cenário/ambiente (sem pessoas e sem o protagonista, com espaço livre no centro/inferior). "
+            "Para 16:9: cenário completo em tons pastéis/dessaturados ligado à fala. Para 9:16: fundo branco sólido limpo com no máximo 1 objeto simples."
+        )
+    )
+    personagem_quem: PersonagemQuemLiteral
+    personagem_enquadramento: PersonagemEnquadramentoLiteral
+    personagem_acao_descricao: str
+    legendas: list[LegendaTextoSchema]
+    personagem_asset_id: str = Field(description="ID exato de um asset da biblioteca ou string vazia.")
+    personagem_posicao: PosicaoPersonagemLiteral
+    personagem_escala: float
+    personagem_flip: bool
+    personagem_animacao: AnimacaoPersonagemLiteral
+    tags: list[str]
 
 
-def _obter_gemini_modelos(raiz: Path) -> list[str]:
-    custom = _ler_env_valor(raiz, "GEMINI_MODEL")
-    if custom:
-        return [custom, *[m for m in GEMINI_MODELOS_PADRAO if m != custom]]
-    return list(GEMINI_MODELOS_PADRAO)
+class StoryboardNarracaoSchema(BaseModel):
+    cenas: list[CenaNarracaoSchema]
 
 
-def _carregar_regras_visuais(raiz: Path) -> str:
-    regra_path = raiz / ".agent" / "rules" / "02-identidade-visual-e-prompts.md"
-    if regra_path.exists():
-        return regra_path.read_text(encoding="utf-8").strip()
+class SugestaoCenaPersonagemSchema(BaseModel):
+    indice_cena: int = Field(description="Índice 0-based da cena na lista enviada.")
+    personagem_asset_id: str = Field(description="ID exato de um asset da biblioteca enviada.")
+    posicao: PosicaoPersonagemLiteral
+    escala: float
+    flip: bool
+    animacao: AnimacaoPersonagemLiteral
+    tags: list[str]
+
+
+class SugestoesPersonagemSchema(BaseModel):
+    sugestoes: list[SugestaoCenaPersonagemSchema]
+
+
+class CenaDePromptSalvoSchema(BaseModel):
+    indice_cena: int = Field(description="Índice 0-based da cena na ordem dos prompts recebidos.")
+    texto: str = Field(description="Trecho exato da narração correspondente a esta cena.")
+    efeito: EfeitoCenaLiteral
+    escala_fundo: float
+    personagem_quem: PersonagemQuemLiteral
+    personagem_enquadramento: PersonagemEnquadramentoLiteral
+    personagem_acao_descricao: str
+    legendas: list[LegendaTextoSchema]
+    personagem_asset_id: str
+    personagem_posicao: PosicaoPersonagemLiteral
+    personagem_escala: float
+    personagem_flip: bool
+    personagem_animacao: AnimacaoPersonagemLiteral
+    tags: list[str]
+
+
+class CenasDePromptsSchema(BaseModel):
+    cenas: list[CenaDePromptSalvoSchema]
+
+
+class AnguloIdeiaSchema(BaseModel):
+    titulo_angulo: str
+    gancho_inicial: str
+    desenvolvimento_resumo: str
+    fechamento_loop: str
+    por_que_funciona: str
+
+
+class IdeiasRoteiroSchema(BaseModel):
+    diagnostico_premissa: str = Field(description="Crítica honesta da premissa original sem rodeios.")
+    angulos: list[AnguloIdeiaSchema] = Field(description="Exatamente 3 ângulos específicos e identificáveis.")
+
+
+class RoteiroNarracaoSchema(BaseModel):
+    titulo_interno: str
+    narracao_pura: str = Field(
+        description=(
+            "Texto puro falado na narração, em português natural do canal Só um Rabisco, "
+            "zero colchetes, zero marcações de cena ou direção."
+        )
+    )
+    resumo_gancho: str
+
+
+class SeoThumbSchema(BaseModel):
+    titulo_principal: str = Field(description="Título recomendado com 7 a 8 palavras (45 a 55 caracteres) para longo, ou curto para Short.")
+    motivo_titulo: str
+    titulos_alternativos: list[str] = Field(description="Exatamente 3 alternativas de título.")
+    texto_na_thumb: str = Field(description="2 a 4 palavras em caixa alta para colocar no topo da thumb.")
+    prompt_thumb_16_9: str = Field(description="Prompt completo em inglês 16:9 no estilo Paper Billions com objeto simbólico do vídeo.")
+    prompt_thumb_sem_texto_16_9: str = Field(description="Variação em inglês 16:9 do prompt sem texto.")
+    descricao_youtube: str
+    tags_youtube: list[str]
+    legenda_short: str
+    hashtags_short: str
+    comentario_fixado: str
+
+
+# ---------------------------------------------------------------------------
+# Utilitários básicos e metadados de projeto
+# ---------------------------------------------------------------------------
+
+
+def _ler_regra_agente(nome_arquivo: str) -> str:
+    caminho = AGENT_RULES_DIR / nome_arquivo
+    if caminho.exists():
+        return caminho.read_text(encoding="utf-8", errors="replace").strip()
     return ""
 
 
-def _frases_contexto_por_bloco(blocos: list[dict[str, Any]]) -> list[str]:
-    """Agrupa cortes quebrados na mesma sentença para dar contexto completo ao LLM."""
-    contextos: list[str] = [""] * len(blocos)
-    grupo_idxs: list[int] = []
-    textos_grupo: list[str] = []
-
-    for idx, b in enumerate(blocos):
-        txt = str(b.get("texto", "")).strip()
-        grupo_idxs.append(idx)
-        if txt:
-            textos_grupo.append(txt)
-        termina_frase = txt.endswith((".", "?", "!"))
-        if termina_frase or idx == len(blocos) - 1:
-            frase = " ".join(textos_grupo).strip()
-            for g_i in grupo_idxs:
-                contextos[g_i] = frase
-            grupo_idxs = []
-            textos_grupo = []
-    return contextos
+def limpar_prefixo_timestamp(prompt: str) -> str:
+    return re.sub(r"^\s*\[\d{1,2}:\d{2}(?::\d{2})?\]\s*", "", prompt or "").strip()
 
 
-def _gerar_fundos_via_gemini(
-    roteiro_completo: str,
-    blocos: list[dict[str, Any]],
-    formato: str,
-    regras_visuais: str,
-    api_key: str,
-    tags_disponiveis: list[str],
-    modelos: list[str] | None = None,
-) -> tuple[list[dict[str, Any]] | None, str | None, str | None]:
-    frases_ctx = _frases_contexto_por_bloco(blocos)
-    lista_cortes = "\n".join(
-        f"{idx}. {_formatar_mm_ss(float(b['inicio']))} ({b['inicio']}s -> {b['fim']}s) | "
-        f"Fala do corte: \"{b['texto']}\" | Frase completa: \"{frases_ctx[idx - 1]}\""
-        for idx, b in enumerate(blocos, start=1)
-    )
+def formatar_mmss(segundos: float) -> str:
+    seg_int = max(0, int(round(segundos)))
+    return f"{seg_int // 60:02d}:{seg_int % 60:02d}"
 
-    if formato == "9:16":
-        instrucao_fundo = (
-            "- Descreva UM único objeto/ícone concreto em destaque, centralizado, sobre fundo branco sólido (#FFFFFF), "
-            "sem cenário complexo."
-        )
-    else:
-        instrucao_fundo = (
-            "- Descreva um cenário/ambiente/objetos de fundo em 2D minimalista coerentes com a fala exata, usando cores "
-            "suaves/pastel/dessaturadas (nunca cores muito fortes ou saturadas) e deixando o terço inferior do quadro livre."
-        )
 
-    tags_txt = ", ".join(tags_disponiveis) if tags_disponiveis else "(nenhuma tag cadastrada)"
-
-    prompt_sistema = (
-        "Você é o diretor de storyboard do canal 'Só um Rabisco'.\n"
-        "O vídeo é montado em CAMADAS: você descreve apenas o FUNDO (cenário vazio ou objeto em destaque); "
-        "o protagonista é um PNG transparente adicionado depois por cima, reagindo à fala.\n"
-        f"Existem EXATAMENTE {len(blocos)} cortes sequenciais. Para CADA corte, gere em INGLÊS uma descrição visual "
-        "100% fiel e específica ao que está sendo falado naquele momento exato, usando a 'Frase completa' quando o corte "
-        "estiver no meio de uma frase.\n\n"
-        "REGRAS OBRIGATÓRIAS (cumpra todas sem exceção):\n"
-        "- ZERO REPETIÇÃO NO VÍDEO INTEIRO: todos os cenários/objetos principais das cenas DEVEM ser diferentes entre si! "
-        "NUNCA repita o mesmo cômodo, espelho, cérebro ou relógio várias vezes ao longo do vídeo.\n"
-        "- Quando uma frase for dividida em 2 ou 3 cortes seguidos, crie visuais COMPLEMENTARES da mesma ideia sem repetir o mesmo objeto "
-        "(ex.: corte sobre 'encosta a' -> quarto à noite com janela e lua na parede; corte seguinte sobre 'cabeça no travesseiro' -> "
-        "close-up de um travesseiro branco macio sobre lençol pastel amassado).\n"
-        "- Traduza literalmente ou metaforicamente os substantivos e ações reais da fala (ex.: chave perdida em gancho vazio, crachá de nome em branco, "
-        "interruptor de luz desligado no escuro, pasta de arquivo brilhando, calçada vazia com placa de tchau, etc.).\n"
-        "- NUNCA use cenários genéricos desconectados da fala.\n"
-        "- O fundo NUNCA pode conter pessoas, personagens, rostos, mãos ou partes do corpo (empty scene, no people, no characters).\n"
-        "- NÃO inclua descrição do protagonista nem o sufixo de estilo (isso será concatenado depois).\n"
-        f"{instrucao_fundo}\n"
-        "- Se houver texto escrito dentro da ilustração (ex: placa, papel, tela, arquivo), coloque esse texto em PORTUGUÊS DO BRASIL entre aspas simples.\n"
-        f"- Formato do vídeo: {formato}.\n"
-        "- efeito (câmera do fundo): escolha entre pop-in, zoom-in, zoom-out, slide-up, shake, cut.\n"
-        f"- tags_pose: de 1 a 3 tags da lista de tags disponíveis que descrevam a emoção/pose ideal do personagem reagindo à fala: [{tags_txt}]. Use lista vazia se nenhuma servir.\n"
-        f"- posicao: onde o personagem fica na tela sem tapar o elemento principal do fundo, entre: {', '.join(POSICOES)}.\n"
-        f"- animacao: entrada/movimento do personagem, entre: {', '.join(ANIMACOES)}.\n"
-        f"- Retorne EXCLUSIVAMENTE um JSON array com EXATAMENTE {len(blocos)} objetos no formato "
-        "{\"indice\": int, \"fundo\": string, \"efeito\": string, \"tags_pose\": [string], \"posicao\": string, \"animacao\": string}, "
-        "na mesma ordem dos cortes.\n\n"
-        f"REGRAS VISUAIS:\n{regras_visuais}\n\n"
-        f"ROTEIRO COMPLETO:\n{roteiro_completo}\n\n"
-        f"CORTES DECUPADOS:\n{lista_cortes}"
-    )
-
-    body = json.dumps(
-        {
-            "contents": [{"parts": [{"text": prompt_sistema}]}],
-            "generationConfig": {"responseMimeType": "application/json", "temperature": 0.7},
-        }
-    ).encode("utf-8")
-
-    efeitos_validos = {"pop-in", "zoom-in", "zoom-out", "slide-up", "shake", "cut"}
-    ultimo_erro: str | None = None
-    candidatos_modelo = modelos or GEMINI_MODELOS_PADRAO
-
-    for modelo in candidatos_modelo:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
-        req = urllib.request.Request(
-            url, data=body, headers={"Content-Type": "application/json"}, method="POST"
-        )
+def inferir_tipo_projeto(pasta_projeto: Path) -> Literal["longo", "short"]:
+    meta_path = pasta_projeto / "projeto.json"
+    if meta_path.exists():
         try:
-            with urllib.request.urlopen(req, timeout=90) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-            texto_json = payload["candidates"][0]["content"]["parts"][0]["text"]
-            itens = json.loads(texto_json)
-            if not isinstance(itens, list) or len(itens) != len(blocos):
-                ultimo_erro = (
-                    f"{modelo}: retornou {len(itens) if isinstance(itens, list) else type(itens).__name__} "
-                    f"itens (esperado {len(blocos)})."
-                )
-                continue
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            tipo = str(meta.get("tipo", "")).lower()
+            if tipo in ("longo", "short"):
+                return tipo  # type: ignore[return-value]
+        except (OSError, json.JSONDecodeError):
+            pass
 
-            resultado: list[dict[str, Any]] = []
-            valido = True
-            for item in itens:
-                fundo = str(item.get("fundo") or item.get("acao") or "").strip().rstrip(".")
-                if not fundo:
-                    valido = False
-                    break
-                efeito = str(item.get("efeito", "pop-in")).strip().lower()
-                if efeito not in efeitos_validos:
-                    efeito = "pop-in"
-                tags_brutas = item.get("tags_pose") or []
-                tags = [str(t).strip() for t in tags_brutas if str(t).strip()][:3]
-                posicao = str(item.get("posicao", "")).strip().lower()
-                animacao = str(item.get("animacao", "")).strip().lower()
-                resultado.append(
-                    {
-                        "fundo": fundo,
-                        "efeito": efeito,
-                        "tags_pose": tags,
-                        "posicao": posicao if posicao in POSICOES else None,
-                        "animacao": animacao if animacao in ANIMACOES else None,
-                    }
-                )
-            if valido:
-                return resultado, modelo, None
-            ultimo_erro = f"{modelo}: retorno com campo 'fundo' vazio."
-        except urllib.error.HTTPError as exc:
-            detalhe = ""
-            try:
-                err_json = json.loads(exc.read().decode("utf-8", errors="replace"))
-                detalhe = str(err_json.get("error", {}).get("message") or "")[:180]
-            except Exception:
-                detalhe = ""
-            ultimo_erro = f"{modelo}: HTTP {exc.code}" + (f" ({detalhe})" if detalhe else "")
-            if exc.code in (404, 429, 500, 502, 503, 504):
-                continue
-            break
-        except (urllib.error.URLError, KeyError, IndexError, json.JSONDecodeError, TimeoutError, AttributeError, TypeError) as exc:
-            ultimo_erro = f"{modelo}: {type(exc).__name__}: {exc}"
-            continue
+    cenas_path = pasta_projeto / "cenas.json"
+    if cenas_path.exists():
+        try:
+            cenas_data = json.loads(cenas_path.read_text(encoding="utf-8"))
+            if cenas_data.get("formato") == "9:16":
+                return "short"
+        except (OSError, json.JSONDecodeError):
+            pass
 
-    return None, None, ultimo_erro or "Falha desconhecida ao chamar API do Gemini."
+    if "short" in pasta_projeto.name.lower():
+        return "short"
+    return "longo"
 
 
-def _carregar_roteiro_e_blocos(
+def ler_ou_criar_meta_projeto(pasta_projeto: Path) -> dict[str, Any]:
+    meta_path = pasta_projeto / "projeto.json"
+    tipo = inferir_tipo_projeto(pasta_projeto)
+    meta: dict[str, Any] = {
+        "tipo": tipo,
+        "formato": "9:16" if tipo == "short" else "16:9",
+    }
+    if meta_path.exists():
+        try:
+            existente = json.loads(meta_path.read_text(encoding="utf-8"))
+            if isinstance(existente, dict):
+                meta.update(existente)
+                t = str(meta.get("tipo", tipo)).lower()
+                if t in ("longo", "short"):
+                    meta["tipo"] = t
+                    meta["formato"] = "9:16" if t == "short" else "16:9"
+        except (OSError, json.JSONDecodeError):
+            pass
+    else:
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return meta
+
+
+def salvar_meta_projeto(
     pasta_projeto: Path,
     tipo: str,
-) -> tuple[str, list[dict[str, Any]], float, str]:
-    ts_path = pasta_projeto / "03-timestamps.json"
-    nar_path = pasta_projeto / "02-narracao.txt"
-
-    narracao = nar_path.read_text(encoding="utf-8").strip() if nar_path.exists() else ""
-    origem = "timestamps"
-    blocos: list[dict[str, Any]] = []
-    duracao_total = 0.0
-
-    if ts_path.exists():
-        ts_data = json.loads(ts_path.read_text(encoding="utf-8"))
-        blocos, duracao_total = _fatiar_por_timestamps(ts_data, tipo)
-
-    if not blocos and narracao:
-        origem = "narracao"
-        blocos, duracao_total = _fatiar_por_narracao(narracao, tipo)
-
-    if not blocos:
-        raise ValueError(
-            "Não há áudio transcrito (03-timestamps.json) nem roteiro (02-narracao.txt) preenchido para gerar as cenas."
-        )
-
-    roteiro_completo = narracao or " ".join(b["texto"] for b in blocos)
-    return roteiro_completo, blocos, duracao_total, origem
-
-
-def montar_pacote_chat(
-    pasta_projeto: Path,
-    tipo_forcado: str | None = None,
+    extras: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """
-    Monta um pacote completo pronto para copiar e colar no chat com:
-    regras de estilo/ritmo + roteiro inteiro + lista de timestamps e falas.
-    """
+    tipo_norm: Literal["longo", "short"] = "short" if str(tipo).lower() == "short" else "longo"
     meta = ler_ou_criar_meta_projeto(pasta_projeto)
-    tipo = tipo_forcado if tipo_forcado in ("longo", "short") else meta["tipo"]
-    formato = "9:16" if tipo == "short" else "16:9"
+    meta["tipo"] = tipo_norm
+    meta["formato"] = "9:16" if tipo_norm == "short" else "16:9"
+    if extras:
+        for k, v in extras.items():
+            if v is not None:
+                meta[k] = v
+    (pasta_projeto / "projeto.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return meta
 
-    raiz = pasta_projeto.parent.parent
-    regras = _carregar_regras_visuais(raiz)
-    roteiro_completo, blocos, duracao_total, origem = _carregar_roteiro_e_blocos(
-        pasta_projeto, tipo
+
+# ---------------------------------------------------------------------------
+# Normalização estrita de prompts positivos e biblioteca de personagens
+# ---------------------------------------------------------------------------
+
+
+_RE_CLAUSULA_NEGATIVA = re.compile(
+    r"(?:,\s*)?\b(?:no|without|avoid|free of|zero)\s+"
+    r"(?:3d|photorealism|photorealistic|realism|realistic|people|person|persons|"
+    r"character|characters|human|humans|crowd|crowds|hand|hands|finger|fingers|"
+    r"body\s*parts?|faces?|silhouettes?|gradients?|shadows?|watermark|watermarks|"
+    r"signatures?|text|letters?|words?|clutter|details?)\b[^,.;]*",
+    flags=re.IGNORECASE,
+)
+
+
+def _limpar_dna_duplicado(texto: str) -> str:
+    limpo = limpar_prefixo_timestamp(texto)
+    for bloco in (
+        DNA_ARTISTICO_OBRIGATORIO,
+        SUFIXO_FUNDO_LONGO,
+        DESCRICAO_PROTAGONISTA,
+        DESCRICAO_SECUNDARIA_BIA,
+    ):
+        if bloco in limpo:
+            limpo = limpo.replace(bloco, " ")
+    # Remove caso o modelo tenha repetido trecho parcial da descrição fixa do protagonista no campo de ação
+    limpo = re.sub(
+        r"Compact cartoon character[^.]*?(?:black details|yellow hoodie\s*\(#FFC928\))[^,.]*[,.]?\s*",
+        "",
+        limpo,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s{2,}", " ", limpo).strip(" ,.;")
+
+
+def normalizar_prompt_fundo(descricao: str, formato: str) -> str:
+    """Monta o prompt da Camada 1 (fundo sem pessoas) com DNA artístico e sufixo do formato."""
+    texto = _limpar_dna_duplicado(descricao)
+    if not texto:
+        texto = (
+            "Simple uncluttered cozy room interior in warm beige (#EFECE6) and sage green (#DCE5DC) tones, open center foreground"
+            if formato != "9:16"
+            else "Minimalist single symbolic object centered on pure solid white background (#FFFFFF)"
+        )
+    if not texto.endswith((".", "!", "?")):
+        texto = f"{texto}."
+
+    if formato == "9:16":
+        if "white background" not in texto.lower() and "#ffffff" not in texto.lower():
+            texto = f"{texto} Pure solid white background (#FFFFFF)."
+        return f"{DNA_ARTISTICO_OBRIGATORIO} {texto} 9:16 aspect ratio. No characters or people in the scene."
+
+    return (
+        f"{DNA_ARTISTICO_OBRIGATORIO} {texto} "
+        f"Open uncluttered space in the center and lower foreground for character overlay. "
+        f"16:9 aspect ratio. {SUFIXO_FUNDO_LONGO}"
     )
 
-    sufixo = _obter_sufixo_estilo(tipo, formato)
-    linhas_cortes = [
-        f"- {_formatar_mm_ss(float(b['inicio']))} ({float(b['inicio']):.2f}s -> {float(b['fim']):.2f}s): \"{b['texto']}\""
-        for b in blocos
-    ]
 
-    regra_fallback_fundo = (
-        "um único objeto/ícone em destaque, centralizado, sobre fundo #FFFFFF, sem pessoas."
-        if tipo == "short"
-        else "cenário ilustrado completo e vazio (sem pessoas) em tons suaves/dessaturados, sem cores fortes."
+def normalizar_prompt_personagem(
+    acao_descricao: str,
+    quem: str = "protagonista",
+    enquadramento: str = "medium shot",
+    formato: str = "16:9",
+) -> str:
+    """Monta o prompt da Camada 2 (personagem isolado em fundo branco #FFFFFF) com DNA e descrição fixa."""
+    acao = _limpar_dna_duplicado(acao_descricao)
+    if not acao:
+        acao = "reacting expressively to the narration with wide eyes and raised eyebrows"
+    if not acao.endswith((".", "!", "?")):
+        acao = f"{acao}."
+
+    desc_base = (
+        DESCRICAO_SECUNDARIA_BIA
+        if quem == "secundaria_bia"
+        else DESCRICAO_PROTAGONISTA
+    )
+    enq = enquadramento if enquadramento in ("close-up", "medium shot", "full body") else "medium shot"
+    return (
+        f"{DNA_ARTISTICO_OBRIGATORIO} {desc_base} "
+        f"Framing: {enq} with ample free margin around head, hair, and hands so nothing is cropped. "
+        f"Action and expression: {acao} "
+        f"Isolated on pure solid white background (#FFFFFF), {formato} aspect ratio."
     )
 
-    pacote = "\n".join(
-        [
-            f"# PACOTE PARA GERAR PROMPTS — {pasta_projeto.name}",
-            f"Formato: {formato} ({'Short / Reels' if tipo == 'short' else 'Vídeo Longo'}) | Duração: {duracao_total:.2f}s | Cortes: {len(blocos)} | Origem: {origem}",
-            "",
-            "## 1. REGRAS DE ESTILO E RITMO",
-            regras or f"Cortes dinâmicos de 1,5s a 3,0s; prompts em inglês; textos na imagem em PT-BR; {regra_fallback_fundo}",
-            "",
-            "O vídeo é montado em CAMADAS: o prompt descreve APENAS o fundo (cenário vazio ou objeto em destaque). "
-            "O personagem NÃO entra no prompt: ele é adicionado depois como PNG transparente por cima.",
-            "",
-            f"Sufixo obrigatório no final de TODA linha:\n{sufixo}",
-            "",
-            "## 2. ROTEIRO COMPLETO DO PROJETO",
-            roteiro_completo,
-            "",
-            "## 3. TIMESTAMPS DECUPADOS (1,5s a 3,0s) E FALA EXATA DE CADA CORTE",
-            *linhas_cortes,
-            "",
-            "## INSTRUÇÃO FINAL",
-            "Gere 1 linha por timestamp no formato `[MM:SS] <cenário vazio ou objeto em destaque em inglês, sem pessoas ou personagens, ilustrando a fala do corte>. <sufixo obrigatório>`, sem repetir o mesmo cenário/objeto em sequência.",
-        ]
-    )
 
-    return {
-        "ok": True,
-        "projeto": pasta_projeto.name,
-        "tipo": tipo,
-        "formato": formato,
-        "duracao_total": duracao_total,
-        "qtd_cortes": len(blocos),
-        "origem": origem,
-        "pacote": pacote,
+def _montar_catalogo_assets() -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], str]:
+    bib = listar_biblioteca()
+    assets: list[dict[str, Any]] = bib.get("assets", [])
+    por_id: dict[str, dict[str, Any]] = {}
+    linhas: list[str] = []
+    for a in assets:
+        aid = str(a.get("id", ""))
+        if not aid:
+            continue
+        por_id[aid] = a
+        # Também indexa pelo caminho sem fonte ou apenas nome caso o modelo abrevie
+        por_id.setdefault(f"{a.get('pasta', '')}/{a.get('arquivo', '')}", a)
+        tags_txt = ", ".join(a.get("tags") or []) or "neutro"
+        extra_sprite = (
+            f" | frames={a.get('frames')} fps={a.get('fps')}"
+            if a.get("tipo") == "sprite"
+            else ""
+        )
+        linhas.append(f"- id: `{aid}` | tipo: {a.get('tipo')} | fonte: {a.get('fonte')} | tags: [{tags_txt}]{extra_sprite}")
+    catalogo_txt = "\n".join(linhas) if linhas else "(Nenhum asset cadastrado na biblioteca de personagens.)"
+    return assets, por_id, catalogo_txt
+
+
+def _resolver_personagem_cena(
+    *,
+    asset_id: str,
+    posicao: str,
+    escala: float,
+    flip: bool,
+    animacao: str,
+    tags: list[str],
+    assets: list[dict[str, Any]],
+    assets_por_id: dict[str, dict[str, Any]],
+    ultimo_asset_id: str | None,
+    formato: str,
+) -> tuple[dict[str, Any], str | None]:
+    if not assets:
+        return personagem_vazio(), None
+
+    escolhido = assets_por_id.get((asset_id or "").strip())
+    if escolhido is None and asset_id:
+        alvo = asset_id.strip().lower()
+        for a in assets:
+            if str(a.get("id", "")).lower() == alvo or str(a.get("arquivo", "")).lower() == alvo:
+                escolhido = a
+                break
+
+    if escolhido is None:
+        # Escolhe o primeiro asset compatível pelas tags que não repita o anterior
+        tags_low = {t.lower() for t in tags}
+        candidatos = [a for a in assets if a.get("id") != ultimo_asset_id] or assets
+        candidatos_ordenados = sorted(
+            candidatos,
+            key=lambda a: (
+                1 if a.get("tipo") == "pose" else 0,
+                len(tags_low & {t.lower() for t in (a.get("tags") or [])}),
+            ),
+            reverse=True,
+        )
+        escolhido = candidatos_ordenados[0]
+
+    # Nunca repetir o mesmo asset em cenas seguidas quando há alternativas na biblioteca
+    if ultimo_asset_id and escolhido.get("id") == ultimo_asset_id and len(assets) > 1:
+        tags_low = {t.lower() for t in tags}
+        alternativas = [a for a in assets if a.get("id") != ultimo_asset_id]
+        alternativas.sort(
+            key=lambda a: (
+                1 if a.get("tipo") == "pose" else 0,
+                len(tags_low & {t.lower() for t in (a.get("tags") or [])}),
+            ),
+            reverse=True,
+        )
+        escolhido = alternativas[0]
+
+    pos_valida = posicao if posicao in ("center", "left", "right", "bottom-corner", "bottom-left") else (
+        "center" if formato == "9:16" else "bottom-corner"
+    )
+    anim_valida = animacao if animacao in (
+        "pop-in", "slide-in-left", "slide-in-right", "float", "bounce", "shake", "none"
+    ) else "pop-in"
+
+    escala_limpa = max(0.65, min(1.25, round(float(escala or 0.92), 2)))
+    tipo_asset = "sprite" if escolhido.get("tipo") == "sprite" else "pose"
+
+    personagem_obj: dict[str, Any] = {
+        "tipo": tipo_asset,
+        "fonte": escolhido.get("fonte", FONTE_PADRAO),
+        "asset": escolhido["id"],
+        "posicao": pos_valida,
+        "escala": escala_limpa,
+        "flip": bool(flip),
+        "animacao": anim_valida,
+        "tags": tags or list(escolhido.get("tags") or []),
     }
+    if tipo_asset == "sprite":
+        personagem_obj["sprite"] = {
+            "frames": int(escolhido.get("frames") or 1),
+            "quadro": int(escolhido.get("quadro") or 512),
+            "fps": int(escolhido.get("fps") or 8),
+        }
+    return personagem_obj, str(escolhido["id"])
 
 
-def _subdividir_texto_em_intervalo(
-    texto: str, inicio: float, fim: float, min_dur: float = 1.5, max_dur: float = 3.0
+def _reconstruir_legendas_por_indices(
+    legendas_schema: list[LegendaIndiceSchema],
+    palavras_globais: list[dict[str, Any]],
+    w_inicio: int,
+    w_fim: int,
+    cena_inicio: float,
+    cena_fim: float,
 ) -> list[dict[str, Any]]:
-    dur = max(0.1, fim - inicio)
-    if dur <= max_dur:
-        return [{"inicio": round(inicio, 2), "fim": round(fim, 2), "texto": texto.strip()}]
-
-    palavras = texto.strip().split()
-    n_cortes = max(2, math.ceil(dur / 2.2))
-    # Garante que cada corte fique entre min_dur e max_dur quando possível
-    while n_cortes > 1 and (dur / n_cortes) < min_dur:
-        n_cortes -= 1
-    while (dur / n_cortes) > max_dur:
-        n_cortes += 1
+    if w_fim < w_inicio or not palavras_globais:
+        return []
 
     blocos: list[dict[str, Any]] = []
-    for i in range(n_cortes):
-        b_ini = round(inicio + (dur * i) / n_cortes, 2)
-        b_fim = round(inicio + (dur * (i + 1)) / n_cortes, 2)
-        p_ini = (len(palavras) * i) // n_cortes
-        p_fim = (len(palavras) * (i + 1)) // n_cortes
-        trecho = " ".join(palavras[p_ini:p_fim]).strip() or texto.strip()
-        blocos.append({"inicio": b_ini, "fim": b_fim, "texto": trecho})
+    cursor = w_inicio
+
+    for idx_leg, leg in enumerate(legendas_schema):
+        if cursor > w_fim:
+            break
+        li = max(cursor, min(leg.palavra_inicio, w_fim))
+        lf = max(li, min(leg.palavra_fim, w_fim))
+        # Garante que o último bloco feche exatamente todas as palavras restantes da cena
+        if idx_leg == len(legendas_schema) - 1:
+            lf = w_fim
+        if li > cursor:
+            li = cursor
+
+        trecho = " ".join(str(p.get("palavra", "")).strip() for p in palavras_globais[li : lf + 1]).strip()
+        if not trecho:
+            cursor = lf + 1
+            continue
+
+        ini_t = round(max(cena_inicio, float(palavras_globais[li]["inicio"])), 2)
+        fim_t = round(min(cena_fim, float(palavras_globais[lf]["fim"])), 2)
+        if fim_t <= ini_t:
+            fim_t = round(min(cena_fim, ini_t + 0.25), 2)
+
+        cor = leg.cor if leg.cor in ("branco", "canal", "alerta") else "branco"
+        blocos.append({"texto": trecho, "inicio": ini_t, "fim": fim_t, "cor": cor})
+        cursor = lf + 1
+
+    # Caso o modelo deixe palavras sobrando no final ou não retorne blocos, cobre o restante
+    if cursor <= w_fim:
+        restante = palavras_globais[cursor : w_fim + 1]
+        for pos in range(0, len(restante), 3):
+            fatia = restante[pos : pos + 3]
+            txt = " ".join(str(p.get("palavra", "")).strip() for p in fatia).strip()
+            if not txt:
+                continue
+            ini_t = round(max(cena_inicio, float(fatia[0]["inicio"])), 2)
+            fim_t = round(min(cena_fim, float(fatia[-1]["fim"])), 2)
+            if fim_t <= ini_t:
+                fim_t = round(min(cena_fim, ini_t + 0.25), 2)
+            blocos.append({"texto": txt, "inicio": ini_t, "fim": fim_t, "cor": "branco"})
+
+    # Continuidade suave entre micro-blocos dentro da cena
+    for idx in range(len(blocos)):
+        if idx > 0 and blocos[idx]["inicio"] < blocos[idx - 1]["fim"]:
+            blocos[idx]["inicio"] = blocos[idx - 1]["fim"]
+        if blocos[idx]["fim"] <= blocos[idx]["inicio"]:
+            blocos[idx]["fim"] = round(blocos[idx]["inicio"] + 0.15, 2)
+    if blocos:
+        blocos[-1]["fim"] = round(max(blocos[-1]["inicio"] + 0.15, cena_fim), 2)
+
     return blocos
 
 
-def _fatiar_por_timestamps(timestamps: dict[str, Any], tipo: str) -> tuple[list[dict[str, Any]], float]:
-    # Nos primeiros 10s (gancho), cortes ainda mais rápidos (1.05s a 1.6s) para segurar retenção;
-    # depois segue ritmo dinâmico (1.3s a 2.4s em Shorts, 1.5s a 2.6s em Longos) com [MM:SS] únicos.
-    min_dur_padrao = 1.3 if tipo == "short" else 1.5
-    max_dur_padrao = 2.4 if tipo == "short" else 2.6
-    alvo_dur_padrao = 1.55 if tipo == "short" else 1.85
+def _distribuir_legendas_sem_timestamps(
+    legendas_schema: list[LegendaTextoSchema],
+    texto_fallback: str,
+    cena_inicio: float,
+    cena_fim: float,
+) -> list[dict[str, Any]]:
+    itens = [l for l in legendas_schema if l.texto.strip()]
+    if not itens:
+        palavras = texto_fallback.split()
+        itens = [
+            LegendaTextoSchema(texto=" ".join(palavras[i : i + 3]), cor="branco")
+            for i in range(0, len(palavras), 3)
+        ]
+    if not itens:
+        return []
 
-    segmentos = timestamps.get("segmentos") or []
+    total_peso = sum(max(1, len(item.texto)) for item in itens)
+    duracao = max(0.3, cena_fim - cena_inicio)
+    blocos: list[dict[str, Any]] = []
+    t = cena_inicio
+    for i, item in enumerate(itens):
+        if i == len(itens) - 1:
+            fim = cena_fim
+        else:
+            frac = max(1, len(item.texto)) / total_peso
+            fim = round(t + duracao * frac, 2)
+        blocos.append(
+            {
+                "texto": item.texto.strip(),
+                "inicio": round(t, 2),
+                "fim": round(max(fim, t + 0.15), 2),
+                "cor": item.cor if item.cor in ("branco", "canal", "alerta") else "branco",
+            }
+        )
+        t = blocos[-1]["fim"]
+    return blocos
 
-    # Achata todas as palavras com seus tempos exatos em sequência única,
-    # evitando cortes curtos (< 1.5s) nas quebras de segmento do Whisper.
-    todas_palavras: list[dict[str, Any]] = []
-    for seg in segmentos:
-        palavras = seg.get("palavras") or []
-        if palavras:
-            for w in palavras:
-                txt = str(w.get("palavra", "")).strip()
+
+def _extrair_palavras_globais(ts_data: dict[str, Any]) -> list[dict[str, Any]]:
+    palavras: list[dict[str, Any]] = []
+    for seg in ts_data.get("segmentos", []):
+        pals = seg.get("palavras") or []
+        if pals:
+            for p in pals:
+                txt = str(p.get("palavra", "")).strip()
                 if txt:
-                    todas_palavras.append(
+                    palavras.append(
                         {
                             "palavra": txt,
-                            "inicio": float(w.get("inicio", 0.0)),
-                            "fim": float(w.get("fim", float(w.get("inicio", 0.0)) + 0.3)),
+                            "inicio": float(p.get("inicio", seg.get("inicio", 0.0))),
+                            "fim": float(p.get("fim", seg.get("fim", 0.0))),
                         }
                     )
         else:
-            s_ini = float(seg.get("inicio", 0.0))
-            s_fim = float(seg.get("fim", s_ini + 1.8))
-            s_txt = str(seg.get("texto", "")).strip()
-            if s_txt:
-                for sub in _subdividir_texto_em_intervalo(s_txt, s_ini, max(s_ini + min_dur_padrao, s_fim), min_dur_padrao, max_dur_padrao):
-                    todas_palavras.append(
-                        {"palavra": sub["texto"], "inicio": sub["inicio"], "fim": sub["fim"]}
-                    )
-
-    blocos: list[dict[str, Any]] = []
-    grupo: list[dict[str, Any]] = []
-
-    for idx, w in enumerate(todas_palavras):
-        grupo.append(w)
-        g_inicio = float(grupo[0]["inicio"])
-        g_fim = float(w["fim"])
-        dur = g_fim - g_inicio
-        eh_gancho = g_inicio < 10.0
-        min_dur = 1.05 if eh_gancho else min_dur_padrao
-        alvo_dur = 1.25 if eh_gancho else alvo_dur_padrao
-        max_dur = 1.65 if eh_gancho else max_dur_padrao
-
-        pontuacao = w["palavra"].endswith((",", ".", "?", "!", ";", ":"))
-        eh_ultima = idx == len(todas_palavras) - 1
-
-        proximo_inicio = float(todas_palavras[idx + 1]["inicio"]) if not eh_ultima else g_fim
-        # Garante que o próximo corte só comece em um segundo [MM:SS] estritamente maior
-        proximo_muda_segundo = int(proximo_inicio) > int(g_inicio)
-
-        atingiu_alvo_pontuacao = pontuacao and dur >= min_dur
-        atingiu_alvo_dinamico = dur >= alvo_dur and (pontuacao or idx % 2 == 0 or dur >= alvo_dur + 0.3)
-        proxima_ultrapassa_max = (
-            not eh_ultima
-            and (float(todas_palavras[idx + 1]["fim"]) - g_inicio) > max_dur
-            and dur >= min_dur
-        )
-        atingiu_max = dur >= max_dur or proxima_ultrapassa_max
-
-        if eh_ultima or (proximo_muda_segundo and (atingiu_max or atingiu_alvo_pontuacao or atingiu_alvo_dinamico)):
-            texto_bloco = " ".join(x["palavra"] for x in grupo).strip()
-            if texto_bloco:
-                blocos.append(
+            # Segmento sem granularidade por palavra: interpola palavras do segmento
+            seg_txt = str(seg.get("texto", "")).strip()
+            toks = seg_txt.split()
+            if not toks:
+                continue
+            ini = float(seg.get("inicio", 0.0))
+            fim = max(ini + 0.2, float(seg.get("fim", ini + 0.5)))
+            step = (fim - ini) / len(toks)
+            for idx, tok in enumerate(toks):
+                palavras.append(
                     {
-                        "inicio": round(g_inicio, 2),
-                        "fim": round(max(g_inicio + 0.35, g_fim), 2),
-                        "texto": texto_bloco,
-                        "palavras": list(grupo),
+                        "palavra": tok,
+                        "inicio": round(ini + idx * step, 3),
+                        "fim": round(ini + (idx + 1) * step, 3),
                     }
                 )
-            grupo = []
-
-    # Se a última cena sobrou menor que min_dur_padrao, funde com a anterior (ou divide igualmente)
-    if len(blocos) >= 2 and (blocos[-1]["fim"] - blocos[-1]["inicio"]) < min_dur_padrao:
-        ultima = blocos.pop()
-        anterior = blocos[-1]
-        dur_combinada = ultima["fim"] - anterior["inicio"]
-        texto_combinado = f"{anterior['texto']} {ultima['texto']}".strip()
-        palavras_comb_ts = [*(anterior.get("palavras") or []), *(ultima.get("palavras") or [])]
-        if dur_combinada <= max_dur_padrao:
-            anterior["fim"] = ultima["fim"]
-            anterior["texto"] = texto_combinado
-            anterior["palavras"] = palavras_comb_ts
-        else:
-            meio = round(anterior["inicio"] + dur_combinada / 2.0, 2)
-            # Garante segundo distinto para o segundo corte
-            if int(meio) <= int(anterior["inicio"]):
-                meio = round(float(int(anterior["inicio"]) + 1), 2)
-            palavras_comb = texto_combinado.split()
-            corte_p = max(1, len(palavras_comb) // 2)
-            anterior["fim"] = meio
-            anterior["texto"] = " ".join(palavras_comb[:corte_p])
-            anterior["palavras"] = palavras_comb_ts[:corte_p] if palavras_comb_ts else []
-            blocos.append(
-                {
-                    "inicio": meio,
-                    "fim": ultima["fim"],
-                    "texto": " ".join(palavras_comb[corte_p:]) or anterior["texto"],
-                    "palavras": palavras_comb_ts[corte_p:] if palavras_comb_ts else [],
-                }
-            )
-
-    # Garante continuidade limpa sem lacunas e com [MM:SS] estritamente crescentes
-    duracao_total = float(timestamps.get("duracao_total") or 0.0)
-    if blocos:
-        blocos[0]["inicio"] = 0.0
-        for i in range(len(blocos) - 1):
-            atual = blocos[i]
-            proximo = blocos[i + 1]
-            if proximo["inicio"] > atual["fim"]:
-                if (proximo["inicio"] - atual["inicio"]) <= max_dur_padrao:
-                    atual["fim"] = proximo["inicio"]
-                else:
-                    atual["fim"] = round(atual["inicio"] + max_dur_padrao, 2)
-                    proximo["inicio"] = atual["fim"]
-            elif proximo["inicio"] < atual["fim"]:
-                proximo["inicio"] = atual["fim"]
-
-            # Garante [MM:SS] estritamente crescente (nunca repetir o mesmo segundo)
-            if int(proximo["inicio"]) <= int(atual["inicio"]):
-                novo_ini = round(float(int(atual["inicio"]) + 1), 2)
-                if novo_ini < proximo["fim"] - 0.5:
-                    atual["fim"] = novo_ini
-                    proximo["inicio"] = novo_ini
-
-        if duracao_total > blocos[-1]["fim"]:
-            if (duracao_total - blocos[-1]["inicio"]) <= max_dur_padrao:
-                blocos[-1]["fim"] = round(duracao_total, 2)
-            else:
-                blocos[-1]["fim"] = round(blocos[-1]["inicio"] + max_dur_padrao, 2)
-        elif duracao_total == 0.0:
-            duracao_total = blocos[-1]["fim"]
-
-    return blocos, round(duracao_total, 2)
+    return palavras
 
 
-def _fatiar_por_narracao(narracao: str, tipo: str) -> tuple[list[dict[str, Any]], float]:
-    min_dur = 1.5
-    max_dur = 3.0
-    palavras_por_bloco = 5 if tipo == "short" else 6
-    palavras_por_seg = 2.7
+def _dividir_janelas_palavras(
+    palavras: list[dict[str, Any]], max_palavras: int = 450
+) -> list[tuple[int, int]]:
+    """Divide o array de palavras em janelas contínuas quebrando apenas em pontuação forte."""
+    n = len(palavras)
+    if n == 0:
+        return []
+    if n <= max_palavras:
+        return [(0, n - 1)]
 
-    frases = [f.strip() for f in re.split(r"(?<=[.!?;:\n])\s+", narracao.strip()) if f.strip()]
-    blocos: list[dict[str, Any]] = []
-    cursor = 0.0
+    janelas: list[tuple[int, int]] = []
+    inicio = 0
+    while inicio < n:
+        alvo_fim = min(n - 1, inicio + max_palavras - 1)
+        if alvo_fim >= n - 1:
+            janelas.append((inicio, n - 1))
+            break
 
-    for frase in frases:
-        palavras = frase.split()
-        i = 0
-        while i < len(palavras):
-            pedaco = palavras[i : i + palavras_por_bloco]
-            # Evita resto minúsculo no fim da frase juntando ao bloco anterior
-            if len(palavras) - (i + palavras_por_bloco) == 1:
-                pedaco = palavras[i:]
-                i = len(palavras)
-            else:
-                i += palavras_por_bloco
-
-            dur = max(min_dur, min(max_dur, round(len(pedaco) / palavras_por_seg, 2)))
-            inicio = round(cursor, 2)
-            fim = round(cursor + dur, 2)
-            # Garante [MM:SS] estritamente crescente
-            if blocos and int(inicio) <= int(blocos[-1]["inicio"]):
-                inicio = round(float(int(blocos[-1]["inicio"]) + 1), 2)
-                blocos[-1]["fim"] = inicio
-                fim = round(max(inicio + min_dur, fim), 2)
-
-            blocos.append({"inicio": inicio, "fim": fim, "texto": " ".join(pedaco)})
-            cursor = fim
-
-    return blocos, round(cursor, 2)
+        corte = alvo_fim
+        # Procura o ponto final/interrogação/exclamação mais próximo para não partir frase entre chamadas
+        for idx in range(alvo_fim, max(inicio + 120, alvo_fim - 90), -1):
+            tok = str(palavras[idx].get("palavra", "")).strip()
+            if tok.endswith((".", "!", "?", "...")):
+                corte = idx
+                break
+        janelas.append((inicio, corte))
+        inicio = corte + 1
+    return janelas
 
 
-def _descrever_personagem(personagem: dict[str, Any]) -> str:
-    if personagem.get("tipo") not in ("pose", "sprite"):
-        return "nenhum"
-    return (
-        f"{personagem['tipo']} `{personagem.get('asset', '')}` | "
-        f"{personagem.get('posicao', 'center')} | {personagem.get('animacao', 'none')}"
+def _construir_system_storyboard(formato: str, catalogo_assets: str) -> str:
+    regra_visual = _ler_regra_agente("02-identidade-visual-e-prompts.md")
+    alvo_duracao = "2.5s a 4.5s" if formato == "16:9" else "1.2s a 2.5s"
+    regras_fundo = (
+        "Para 16:9 (VÍDEO LONGO): NUNCA gere fundo branco! Crie um cenário completo e detalhado ligado à fala "
+        "(quarto à noite, mesa de estudos bagunçada, corredor de mercado, sala de aula, parque, escritório etc.) "
+        "usando OBRIGATORIAMENTE tons suaves, pastéis ou dessaturados (ex.: bege quente #EFECE6, azul-acinzentado #3A4659, "
+        "verde-sálvia #DCE5DC, azul-céu claro #DCE8EE, lavanda suave #E6E4EE, areia #EDE6D8). "
+        "Proibido cores vibrantes/neon (azulão, vermelhão, amarelão). "
+        "Deixe espaço livre no centro/centro-inferior para o personagem."
+        if formato == "16:9"
+        else "Para 9:16 (SHORT): mantenha fundo branco sólido puro (#FFFFFF) limpo, com no máximo um objeto simples de apoio ligado à fala."
     )
+    return f"""Você é o diretor visual e editor de storyboard do canal "Só um Rabisco".
+Seu trabalho é transformar a narração (com timestamps exatos do Whisper quando fornecidos) em cenas com DUAS camadas independentes (`fundo_descricao` e `personagem_acao_descricao`), sem incluir `[MM:SS]` nem o DNA repetido nos campos.
+
+REGRAS OBRIGATÓRIAS:
+1. CORTES NATURAIS ({formato}):
+   - Agrupe palavras respeitando pontuação e sentido completo.
+   - Duração alvo por cena: {alvo_duracao}.
+   - NUNCA corte números, valores ou frases no meio.
+   - Cubra TODAS as palavras em ordem contínua sem pular índices.
+
+2. CAMADA 1 — PROMPT DE FUNDO (`fundo_descricao`, EM INGLÊS):
+   - ZERO PESSOAS: Nunca inclua personagens, silhuetas humanas ou o protagonista no fundo.
+   - CADA cena deve descrever um cenário/objeto ÚNICO ligado à narração daquele trecho (zero repetição genérica).
+   - {regras_fundo}
+   - Textos internos em placas/relógios/cadernos devem estar em PORTUGUÊS DO BRASIL.
+
+3. CAMADA 2 — PROMPT DE PERSONAGEM (`personagem_quem`, `personagem_enquadramento`, `personagem_acao_descricao`, EM INGLÊS):
+   - O sistema adiciona automaticamente o DNA artístico, a descrição fixa do personagem e o fundo branco puro (#FFFFFF).
+   - Em `personagem_acao_descricao`, traduza a fala exata daquele segundo em uma ação física, reação exagerada ou metáfora cômica.
+   - Varie planos (`close-up`, `medium shot`, `full body`) e NUNCA repita a mesma pose em cenas seguidas.
+   - Qualquer texto visível no personagem/objetos dele deve estar em PORTUGUÊS DO BRASIL.
+
+4. SELEÇÃO DE ASSET DA BIBLIOTECA E RITMO VISUAL:
+   - Escolha `personagem_asset_id` APENAS dentre os IDs reais da lista abaixo (priorize `pose`, use `sprite` só para movimento contínuo, nunca repita em cenas seguidas).
+   - Varie `personagem_posicao`, `personagem_flip`, `efeito`, `personagem_animacao` e `legendas[].cor` (`branco`, `canal`, `alerta`).
+
+BIBLIOTECA REAL DE PERSONAGENS DISPONÍVEL:
+{catalogo_assets}
+
+{regra_visual}""".strip()
 
 
-def _montar_cena(
-    inicio: float,
-    fim: float,
-    efeito: str,
-    fala: str,
-    legendas: list[dict[str, Any]],
-    arquivo: str,
-    prompt_fundo: str,
-    seletor: SeletorPersonagem,
-    tags_pose: list[str],
-    posicao: str | None = None,
-    animacao: str | None = None,
+def _salvar_arquivos_storyboard(
+    pasta_projeto: Path,
+    cenas_config: dict[str, Any],
+    *,
+    sincronizar_raiz: bool = True,
 ) -> dict[str, Any]:
-    """Monta uma cena em camadas: `fundo` (imagem gerada) + `personagem` (PNG transparente da biblioteca)."""
-    personagem = seletor.escolher(
-        fala,
-        efeito=efeito,
-        tags_desejadas=tags_pose,
-        posicao=posicao,
-        animacao=animacao,
-    )
-    return {
-        "arquivo": arquivo,
-        "inicio": inicio,
-        "fim": fim,
-        "efeito": efeito,
-        "texto": fala,
-        "narracao": fala,
-        "legendas": legendas,
-        "escala": 1.0,
-        "fundo": {"arquivo": arquivo, "prompt": prompt_fundo},
-        "personagem": personagem,
-    }
+    cenas = cenas_config.get("cenas", [])
+    formato = cenas_config.get("formato", "16:9")
 
+    md_linhas = [
+        f"# Storyboard e Prompts ({formato}) - {pasta_projeto.name}",
+        "",
+        f"Total de cenas: **{len(cenas)}** | Duração total: **{cenas_config.get('duracao_total', 0):.2f}s**",
+        "",
+    ]
+    prompts_linhas: list[str] = []
+    prompts_personagens_linhas: list[str] = []
+    tempos_linhas: list[str] = []
+    flow_linhas: list[str] = []
 
-def sugerir_personagens(cenas_data: dict[str, Any], apenas_sem_personagem: bool = False) -> int:
-    """Escolhe pose/sprite da biblioteca para cada cena de um cenas.json existente (sem tocar nos fundos)."""
-    seletor = SeletorPersonagem(formato=str(cenas_data.get("formato") or "16:9"))
-    alteradas = 0
-    for cena in cenas_data.get("cenas", []):
-        atual = cena.get("personagem") if isinstance(cena.get("personagem"), dict) else None
-        if apenas_sem_personagem and atual and atual.get("tipo") in ("pose", "sprite"):
-            seletor.registrar(atual)
-            continue
-        fala = str(cena.get("narracao") or cena.get("texto") or "")
-        tags = (atual or {}).get("tags") or _tags_pose_por_fala(fala)
-        cena["personagem"] = seletor.escolher(
-            fala,
-            efeito=str(cena.get("efeito") or ""),
-            tags_desejadas=list(tags),
+    for idx, cena in enumerate(cenas, start=1):
+        ini = float(cena.get("inicio", 0.0))
+        fim = float(cena.get("fim", ini))
+        marca = f"[{formatar_mmss(ini)}]"
+        prompt_fundo_limpo = limpar_prefixo_timestamp(
+            cena.get("prompt_fundo") or cena.get("fundo", {}).get("prompt", "")
         )
-        alteradas += 1
-    cenas_data["versao_schema"] = SCHEMA_VERSAO
-    return alteradas
+        pers = cena.get("personagem") or {}
+        prompt_pers_limpo = limpar_prefixo_timestamp(
+            cena.get("prompt_personagem") or pers.get("prompt", "")
+        )
+        prompt_marcado = f"{marca} {prompt_fundo_limpo}"
+
+        md_linhas.append(f"## Cena {idx:02d} {marca} ({ini:.2f}s → {fim:.2f}s)")
+        md_linhas.append(f"- **Fala:** {cena.get('narracao', cena.get('texto', ''))}")
+        md_linhas.append(f"- **Efeito:** `{cena.get('efeito', 'cut')}`")
+        md_linhas.append(
+            f"- **Personagem (camada):** `{pers.get('asset', 'none')}` "
+            f"(`{pers.get('tipo', 'none')}`, pos `{pers.get('posicao', 'center')}`, "
+            f"anim `{pers.get('animacao', 'none')}`, flip `{pers.get('flip', False)}`)"
+        )
+        md_linhas.append(f"- **Prompt Fundo ({cena.get('arquivo', '')}):**")
+        md_linhas.append(prompt_fundo_limpo)
+        if prompt_pers_limpo:
+            md_linhas.append("- **Prompt Personagem (isolado #FFFFFF):**")
+            md_linhas.append(prompt_pers_limpo)
+        md_linhas.append("")
+
+        prompts_linhas.append(prompt_fundo_limpo)
+        prompts_personagens_linhas.append(prompt_pers_limpo)
+        tempos_linhas.append(f"{idx:02d}\t{ini:.2f}\t{fim:.2f}\t{marca}")
+        flow_linhas.append(prompt_marcado)
+
+    storyboard_md = "\n".join(md_linhas).strip() + "\n"
+    (pasta_projeto / "04-storyboard-e-prompts.md").write_text(storyboard_md, encoding="utf-8")
+    (pasta_projeto / "prompts_flow.txt").write_text("\n".join(flow_linhas) + ("\n" if flow_linhas else ""), encoding="utf-8")
+    (pasta_projeto / "prompts_imagens.txt").write_text("\n".join(prompts_linhas) + ("\n" if prompts_linhas else ""), encoding="utf-8")
+    (pasta_projeto / "prompts_personagens.txt").write_text(
+        "\n".join(prompts_personagens_linhas) + ("\n" if prompts_personagens_linhas else ""),
+        encoding="utf-8",
+    )
+    (pasta_projeto / "tempos_imagens.txt").write_text("\n".join(tempos_linhas) + ("\n" if tempos_linhas else ""), encoding="utf-8")
+    (pasta_projeto / "cenas.json").write_text(
+        json.dumps(cenas_config, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    if sincronizar_raiz:
+        (ROOT_DIR / "prompts_imagens.txt").write_text(
+            "\n".join(prompts_linhas) + ("\n" if prompts_linhas else ""), encoding="utf-8"
+        )
+        (ROOT_DIR / "tempos_imagens.txt").write_text(
+            "\n".join(tempos_linhas) + ("\n" if tempos_linhas else ""), encoding="utf-8"
+        )
+
+    return {
+        "ok": True,
+        "storyboard": storyboard_md,
+        "qtd_cenas": len(cenas),
+    }
 
 
 def gerar_storyboard_automatico(
@@ -946,330 +790,739 @@ def gerar_storyboard_automatico(
     tipo_forcado: str | None = None,
     sincronizar_raiz: bool = True,
 ) -> dict[str, Any]:
-    """
-    Gera automaticamente cenas.json (fundo + personagem em camadas), 04-storyboard-e-prompts.md,
-    prompts_flow.txt e (opcionalmente) prompts_imagens.txt na raiz a partir de 03-timestamps.json
-    ou 02-narracao.txt. Os prompts de imagem descrevem apenas o fundo/objeto; o personagem vem
-    da biblioteca de assets (assets/personagem/sprites_output).
-    """
-    meta = ler_ou_criar_meta_projeto(pasta_projeto)
-    tipo = tipo_forcado if tipo_forcado in ("longo", "short") else meta["tipo"]
-    if tipo != meta["tipo"]:
-        meta = salvar_meta_projeto(pasta_projeto, tipo)
-
-    formato = "9:16" if tipo == "short" else "16:9"
-
-    raiz = pasta_projeto.parent.parent
-    roteiro_completo, blocos, duracao_total, origem = _carregar_roteiro_e_blocos(
-        pasta_projeto, tipo
+    """Gera cenas.json e prompts completos exclusivamente via Gemini Structured Outputs."""
+    tipo = (
+        "short"
+        if tipo_forcado == "short"
+        else "longo"
+        if tipo_forcado == "longo"
+        else inferir_tipo_projeto(pasta_projeto)
     )
-    regras_visuais = _carregar_regras_visuais(raiz)
+    formato: Literal["16:9", "9:16"] = "9:16" if tipo == "short" else "16:9"
+    salvar_meta_projeto(pasta_projeto, tipo)
 
-    seletor = SeletorPersonagem(formato=formato)
+    narracao_path = pasta_projeto / "02-narracao.txt"
+    narracao_texto = (
+        narracao_path.read_text(encoding="utf-8", errors="replace").strip()
+        if narracao_path.exists()
+        else ""
+    )
 
-    fundos_gemini: list[dict[str, Any]] | None = None
-    modelo_ia: str | None = None
-    aviso_ia: str | None = None
-    api_key = _obter_gemini_api_key(raiz)
-    if api_key:
-        fundos_gemini, modelo_ia, erro_ia = _gerar_fundos_via_gemini(
-            roteiro_completo=roteiro_completo,
-            blocos=blocos,
-            formato=formato,
-            regras_visuais=regras_visuais,
-            api_key=api_key,
-            tags_disponiveis=seletor.tags_disponiveis(),
-            modelos=_obter_gemini_modelos(raiz),
+    ts_path = pasta_projeto / "03-timestamps.json"
+    ts_data: dict[str, Any] | None = None
+    if ts_path.exists():
+        try:
+            ts_data = json.loads(ts_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            ts_data = None
+
+    assets, assets_por_id, catalogo_assets = _montar_catalogo_assets()
+    system_prompt = _construir_system_storyboard(formato, catalogo_assets)
+
+    cenas_montadas: list[dict[str, Any]] = []
+    ultimo_asset_id: str | None = None
+    modelo_usado = ""
+    origem: Literal["timestamps", "narracao"] = "narracao"
+    duracao_total = 0.0
+
+    palavras_globais = _extrair_palavras_globais(ts_data) if ts_data else []
+
+    if ts_data and palavras_globais:
+        origem = "timestamps"
+        duracao_total = round(
+            float(ts_data.get("duracao_total") or palavras_globais[-1]["fim"]), 2
         )
-        if not fundos_gemini and erro_ia:
-            aviso_ia = f"Gemini falhou ({erro_ia}); usando fallback local."
+        texto_completo = narracao_texto or " ".join(p["palavra"] for p in palavras_globais)
+        janelas = _dividir_janelas_palavras(palavras_globais)
+        prompts_anteriores: list[str] = []
+
+        for j_idx, (j_ini, j_fim) in enumerate(janelas, start=1):
+            palavras_bloco = [
+                f"{idx}| {palavras_globais[idx]['palavra']} ({palavras_globais[idx]['inicio']:.2f}-{palavras_globais[idx]['fim']:.2f}s)"
+                for idx in range(j_ini, j_fim + 1)
+            ]
+            contexto_anterior = ""
+            if prompts_anteriores:
+                contexto_anterior = (
+                    f"\nÚLTIMO ASSET USADO NA CENA ANTERIOR (NÃO REPETIR NA PRÓXIMA): {ultimo_asset_id or 'nenhum'}\n"
+                    f"ÚLTIMOS CENÁRIOS JÁ GERADOS (NÃO REPETIR): {'; '.join(prompts_anteriores[-5:])}\n"
+                )
+
+            user_prompt = (
+                f"FORMATO DO VÍDEO: {formato} ({tipo})\n"
+                f"BLOCO DE TRABALHO: parte {j_idx}/{len(janelas)} — cubra EXATAMENTE os índices de palavra {j_ini} até {j_fim}.\n"
+                f"DURAÇÃO ALVO POR CENA: {'2.5s a 4.5s' if formato == '16:9' else '1.2s a 2.5s'}.\n"
+                f"{contexto_anterior}\n"
+                f"ROTEIRO COMPLETO (para contexto narrativo):\n{texto_completo}\n\n"
+                f"PALAVRAS COM TIMESTAMPS DESTE TRECHO (índice | palavra (início-fim)):\n"
+                + "\n".join(palavras_bloco)
+            )
+
+            resultado, modelo_usado = gerar_estruturado(
+                ROOT_DIR,
+                user_prompt,
+                StoryboardTimestampsSchema,
+                system_instruction=system_prompt,
+                temperature=0.65,
+            )
+
+            if not resultado.cenas:
+                raise RuntimeError("Gemini retornou lista de cenas vazia para o storyboard.")
+
+            cursor_palavra = j_ini
+            total_bloco = len(resultado.cenas)
+            for idx_local, cena_ai in enumerate(resultado.cenas):
+                if cursor_palavra > j_fim:
+                    break
+                w_start = cursor_palavra
+                w_end = max(w_start, min(j_fim, cena_ai.palavra_fim))
+                if idx_local == total_bloco - 1:
+                    w_end = j_fim
+                if w_end < w_start:
+                    w_end = w_start
+
+                fala = " ".join(
+                    str(p.get("palavra", "")).strip()
+                    for p in palavras_globais[w_start : w_end + 1]
+                ).strip()
+
+                t_ini = round(float(palavras_globais[w_start]["inicio"]), 2)
+                t_fim = round(float(palavras_globais[w_end]["fim"]), 2)
+                if not cenas_montadas:
+                    t_ini = 0.0
+                else:
+                    t_ini = float(cenas_montadas[-1]["fim"])
+                if t_fim <= t_ini:
+                    t_fim = round(t_ini + 0.35, 2)
+
+                legendas = _reconstruir_legendas_por_indices(
+                    cena_ai.legendas,
+                    palavras_globais,
+                    w_start,
+                    w_end,
+                    t_ini,
+                    t_fim,
+                )
+
+                num_cena = len(cenas_montadas) + 1
+                arquivo_rel = f"assets_atual/cenas/cena_{num_cena:02d}.png"
+                prompt_fundo = normalizar_prompt_fundo(cena_ai.fundo_descricao, formato)
+                prompt_personagem = normalizar_prompt_personagem(
+                    cena_ai.personagem_acao_descricao,
+                    quem=cena_ai.personagem_quem,
+                    enquadramento=cena_ai.personagem_enquadramento,
+                    formato=formato,
+                )
+                pers_obj, ultimo_asset_id = _resolver_personagem_cena(
+                    asset_id=cena_ai.personagem_asset_id,
+                    posicao=cena_ai.personagem_posicao,
+                    escala=cena_ai.personagem_escala,
+                    flip=cena_ai.personagem_flip,
+                    animacao=cena_ai.personagem_animacao,
+                    tags=cena_ai.tags,
+                    assets=assets,
+                    assets_por_id=assets_por_id,
+                    ultimo_asset_id=ultimo_asset_id,
+                    formato=formato,
+                )
+                pers_obj["prompt"] = prompt_personagem
+
+                cenas_montadas.append(
+                    {
+                        "arquivo": arquivo_rel,
+                        "inicio": round(t_ini, 2),
+                        "fim": round(t_fim, 2),
+                        "efeito": cena_ai.efeito,
+                        "texto": fala,
+                        "narracao": fala,
+                        "legendas": legendas,
+                        "escala": max(1.0, min(1.1, round(float(cena_ai.escala_fundo or 1.03), 2))),
+                        "prompt_fundo": prompt_fundo,
+                        "prompt_personagem": prompt_personagem,
+                        "fundo": {
+                            "arquivo": arquivo_rel,
+                            "prompt": prompt_fundo,
+                        },
+                        "personagem": pers_obj,
+                    }
+                )
+                prompts_anteriores.append(cena_ai.fundo_descricao.strip())
+                cursor_palavra = w_end + 1
+
+        if cenas_montadas:
+            cenas_montadas[-1]["fim"] = round(max(float(cenas_montadas[-1]["inicio"]) + 0.25, duracao_total), 2)
+            if cenas_montadas[-1]["legendas"]:
+                cenas_montadas[-1]["legendas"][-1]["fim"] = cenas_montadas[-1]["fim"]
+
     else:
-        aviso_ia = "GEMINI_API_KEY não configurada no .env; usando fallback local."
-
-    geracao_ia = "gemini" if fundos_gemini else "fallback_local"
-    rotulo_geracao = (
-        f"Gemini API ({modelo_ia})"
-        if fundos_gemini
-        else f"Fallback local ({aviso_ia or 'sem IA'})"
-    )
-
-    cenas_json_lista: list[dict[str, Any]] = []
-    linhas_md: list[str] = [
-        f"# Storyboard e Prompts - {pasta_projeto.name}",
-        "",
-        f"- **Formato:** `{formato}` ({'Short / Reels' if tipo == 'short' else 'YouTube Longo'})",
-        f"- **Origem da decupagem:** `{'03-timestamps.json' if origem == 'timestamps' else '02-narracao.txt (estimado)'}`",
-        f"- **Geração de cenas:** `{rotulo_geracao}`",
-        f"- **Camadas:** fundo gerado no ComfyUI + personagem da biblioteca (`{len(seletor.assets)}` assets)",
-        f"- **Duração total:** `{duracao_total:.2f}s`",
-        f"- **Total de cenas:** `{len(blocos)}`",
-        "",
-        "---",
-        "",
-    ]
-    prompts_txt_lista: list[str] = []
-    tempos_txt_lista: list[str] = []
-
-    sufixo = _obter_sufixo_estilo(tipo, formato)
-    fundos_usados: set[str] = set()
-
-    for idx, bloco in enumerate(blocos, start=1):
-        fala = bloco["texto"]
-        inicio = float(bloco["inicio"])
-        fim = float(bloco["fim"])
-        marca = _formatar_mm_ss(inicio)
-
-        posicao: str | None = None
-        animacao: str | None = None
-        if fundos_gemini:
-            item = fundos_gemini[idx - 1]
-            fundo = item["fundo"]
-            efeito = item["efeito"]
-            tags_pose = item["tags_pose"] or _tags_pose_por_fala(fala)
-            posicao = item["posicao"]
-            animacao = item["animacao"]
-        else:
-            fundo, efeito, tags_pose = _escolher_fundo_efeito_tags(fala, idx, fundos_usados)
-
-        legendas = _gerar_blocos_legenda(fala, inicio, fim, bloco.get("palavras"))
-        prompt_completo = f"{marca} {fundo}. {sufixo}"
-
-        cena = _montar_cena(
-            inicio=inicio,
-            fim=fim,
-            efeito=efeito,
-            fala=fala,
-            legendas=legendas,
-            arquivo=f"assets_atual/cenas/cena_{idx:02d}.png",
-            prompt_fundo=limpar_prefixo_timestamp(prompt_completo),
-            seletor=seletor,
-            tags_pose=tags_pose,
-            posicao=posicao,
-            animacao=animacao,
+        if not narracao_texto:
+            raise ValueError(
+                "Não encontrei nem 03-timestamps.json nem 02-narracao.txt neste projeto."
+            )
+        origem = "narracao"
+        user_prompt = (
+            f"FORMATO DO VÍDEO: {formato} ({tipo})\n"
+            f"DURAÇÃO ALVO POR CENA: {'2.5s a 4.5s' if formato == '16:9' else '1.2s a 2.5s'}.\n"
+            f"Ainda não há áudio gravado: divida a narração em cortes naturais e estime a duração realista em segundos de cada cena (aprox. 2.5 palavras/segundo).\n\n"
+            f"NARRAÇÃO COMPLETA:\n{narracao_texto}"
         )
-        cenas_json_lista.append(cena)
-
-        linhas_md.append(
-            f"### Cena {idx:03d} — {marca} (`{inicio:.2f}s` → `{fim:.2f}s` | Efeito: `{efeito}`)"
+        resultado, modelo_usado = gerar_estruturado(
+            ROOT_DIR,
+            user_prompt,
+            StoryboardNarracaoSchema,
+            system_instruction=system_prompt,
+            temperature=0.65,
         )
-        linhas_md.append(f'> *"{fala}"*')
-        linhas_md.append("")
-        linhas_md.append(prompt_completo)
-        linhas_md.append("")
-        linhas_md.append(f"> Personagem (camada): {_descrever_personagem(cena['personagem'])}")
-        linhas_md.append("")
+        if not resultado.cenas:
+            raise RuntimeError("Gemini retornou lista de cenas vazia para a narração.")
 
-        prompts_txt_lista.append(limpar_prefixo_timestamp(prompt_completo))
-        tempos_txt_lista.append(marca)
+        cursor_tempo = 0.0
+        for idx, cena_ai in enumerate(resultado.cenas, start=1):
+            dur = max(0.8, round(float(cena_ai.duracao_segundos or (2.0 if formato == "9:16" else 3.2)), 2))
+            t_ini = round(cursor_tempo, 2)
+            t_fim = round(t_ini + dur, 2)
+            cursor_tempo = t_fim
 
-    cenas_payload = {
+            arquivo_rel = f"assets_atual/cenas/cena_{idx:02d}.png"
+            prompt_fundo = normalizar_prompt_fundo(cena_ai.fundo_descricao, formato)
+            prompt_personagem = normalizar_prompt_personagem(
+                cena_ai.personagem_acao_descricao,
+                quem=cena_ai.personagem_quem,
+                enquadramento=cena_ai.personagem_enquadramento,
+                formato=formato,
+            )
+            pers_obj, ultimo_asset_id = _resolver_personagem_cena(
+                asset_id=cena_ai.personagem_asset_id,
+                posicao=cena_ai.personagem_posicao,
+                escala=cena_ai.personagem_escala,
+                flip=cena_ai.personagem_flip,
+                animacao=cena_ai.personagem_animacao,
+                tags=cena_ai.tags,
+                assets=assets,
+                assets_por_id=assets_por_id,
+                ultimo_asset_id=ultimo_asset_id,
+                formato=formato,
+            )
+            pers_obj["prompt"] = prompt_personagem
+            legendas = _distribuir_legendas_sem_timestamps(
+                cena_ai.legendas,
+                cena_ai.texto,
+                t_ini,
+                t_fim,
+            )
+            cenas_montadas.append(
+                {
+                    "arquivo": arquivo_rel,
+                    "inicio": t_ini,
+                    "fim": t_fim,
+                    "efeito": cena_ai.efeito,
+                    "texto": cena_ai.texto.strip(),
+                    "narracao": cena_ai.texto.strip(),
+                    "legendas": legendas,
+                    "escala": max(1.0, min(1.1, round(float(cena_ai.escala_fundo or 1.03), 2))),
+                    "prompt_fundo": prompt_fundo,
+                    "prompt_personagem": prompt_personagem,
+                    "fundo": {
+                        "arquivo": arquivo_rel,
+                        "prompt": prompt_fundo,
+                    },
+                    "personagem": pers_obj,
+                }
+            )
+        duracao_total = round(cursor_tempo, 2)
+
+    cenas_config: dict[str, Any] = {
         "projeto": pasta_projeto.name,
         "formato": formato,
         "fps": 30,
         "duracao_total": duracao_total,
         "audio": "assets_atual/audio.wav",
-        "versao_schema": SCHEMA_VERSAO,
-        "cenas": cenas_json_lista,
+        "versao_schema": 2,
+        "mostrar_legendas": True,
+        "cenas": cenas_montadas,
     }
-
-    (pasta_projeto / "cenas.json").write_text(
-        json.dumps(cenas_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    salvo = _salvar_arquivos_storyboard(
+        pasta_projeto,
+        cenas_config,
+        sincronizar_raiz=sincronizar_raiz,
     )
-    storyboard_md = "\n".join(linhas_md)
-    (pasta_projeto / "04-storyboard-e-prompts.md").write_text(storyboard_md, encoding="utf-8")
-
-    # Salva prompts_flow.txt no projeto e prompts_imagens.txt na raiz sem prefixo [MM:SS]
-    (pasta_projeto / "prompts_flow.txt").write_text(
-        "\n".join(prompts_txt_lista) + "\n", encoding="utf-8"
-    )
-
-    if sincronizar_raiz:
-        raiz = pasta_projeto.parent.parent
-        (raiz / "prompts_imagens.txt").write_text(
-            "\n\n".join(prompts_txt_lista) + "\n", encoding="utf-8"
-        )
-        (raiz / "tempos_imagens.txt").write_text(
-            "\n\n".join(tempos_txt_lista) + "\n", encoding="utf-8"
-        )
-
     return {
         "ok": True,
         "origem": origem,
         "tipo": tipo,
         "formato": formato,
         "duracao_total": duracao_total,
-        "qtd_cenas": len(cenas_json_lista),
-        "geracao_ia": geracao_ia,
-        "modelo_ia": modelo_ia,
-        "aviso_ia": aviso_ia,
-        "cenas": cenas_payload,
-        "storyboard": storyboard_md,
+        "qtd_cenas": salvo["qtd_cenas"],
+        "geracao_ia": "gemini",
+        "modelo_ia": modelo_usado,
+        "aviso_ia": None,
+        "cenas": cenas_config,
+        "storyboard": salvo["storyboard"],
     }
 
 
-def _parsear_mm_ss(marca: str) -> float:
-    m = re.match(r"^\[(\d{2}):(\d{2})\]", marca.strip())
-    if not m:
-        return 0.0
-    return int(m.group(1)) * 60.0 + int(m.group(2))
+def sugerir_personagens(
+    cenas_data: dict[str, Any],
+    apenas_sem_personagem: bool = False,
+    raiz: Path | None = None,
+) -> int:
+    """Sugere pose/sprite, posição, flip e animação para as cenas usando Gemini Structured Outputs."""
+    cenas: list[dict[str, Any]] = cenas_data.get("cenas") or []
+    if not cenas:
+        return 0
+
+    assets, assets_por_id, catalogo_assets = _montar_catalogo_assets()
+    if not assets:
+        return 0
+
+    formato = str(cenas_data.get("formato") or "16:9")
+    indices_alvo = [
+        idx
+        for idx, cena in enumerate(cenas)
+        if not apenas_sem_personagem
+        or not (isinstance(cena.get("personagem"), dict) and cena["personagem"].get("tipo", "none") != "none")
+    ]
+    if not indices_alvo:
+        return 0
+
+    resumo_cenas = "\n".join(
+        f"[{idx}] fala=\"{cenas[idx].get('narracao') or cenas[idx].get('texto', '')}\" | "
+        f"fundo=\"{limpar_prefixo_timestamp((cenas[idx].get('fundo') or {}).get('prompt', ''))}\""
+        for idx in indices_alvo
+    )
+
+    prompt = (
+        f"FORMATO DO VÍDEO: {formato}\n"
+        f"Para cada índice de cena listado abaixo, selecione o melhor `personagem_asset_id` da biblioteca REAL,\n"
+        f"priorizando `pose` estática por compatibilidade das tags e usando `sprite` somente se a ação exigir movimento contínuo.\n"
+        f"NUNCA repita o mesmo `personagem_asset_id` em cenas consecutivas e varie posição, flip e animação organicamente.\n\n"
+        f"BIBLIOTECA REAL DE ASSETS:\n{catalogo_assets}\n\n"
+        f"CENAS:\n{resumo_cenas}"
+    )
+
+    res, _ = gerar_estruturado(
+        raiz or ROOT_DIR,
+        prompt,
+        SugestoesPersonagemSchema,
+        temperature=0.55,
+    )
+    mapa_sugestoes = {s.indice_cena: s for s in res.sugestoes}
+
+    alteradas = 0
+    ultimo_asset_id: str | None = None
+    for idx, cena in enumerate(cenas):
+        if idx not in indices_alvo:
+            pers_atual = cena.get("personagem")
+            if isinstance(pers_atual, dict) and pers_atual.get("asset"):
+                ultimo_asset_id = str(pers_atual["asset"])
+            continue
+        sug = mapa_sugestoes.get(idx)
+        pers_obj, ultimo_asset_id = _resolver_personagem_cena(
+            asset_id=sug.personagem_asset_id if sug else "",
+            posicao=sug.posicao if sug else ("center" if formato == "9:16" else "bottom-corner"),
+            escala=sug.escala if sug else 0.92,
+            flip=sug.flip if sug else False,
+            animacao=sug.animacao if sug else "pop-in",
+            tags=sug.tags if sug else [],
+            assets=assets,
+            assets_por_id=assets_por_id,
+            ultimo_asset_id=ultimo_asset_id,
+            formato=formato,
+        )
+        cena["personagem"] = pers_obj
+        alteradas += 1
+    return alteradas
 
 
 def gerar_cenas_de_prompts_salvos(
     pasta_projeto: Path,
     tipo_forcado: str | None = None,
+    sincronizar_raiz: bool = True,
 ) -> dict[str, Any]:
-    """
-    Gera cenas.json lendo diretamente os prompts salvos (prompts_imagens.txt do projeto,
-    04-storyboard-e-prompts.md ou prompts_imagens.txt da raiz), SEM modificar nem sobrescrever
-    nenhum arquivo de prompts.
-    """
-    meta = ler_ou_criar_meta_projeto(pasta_projeto)
-    tipo = tipo_forcado if tipo_forcado in ("longo", "short") else meta["tipo"]
-    formato = "9:16" if tipo == "short" else "16:9"
-    raiz = pasta_projeto.parent.parent
+    """Monta cenas.json a partir de prompts salvos + tempos + narração usando Gemini Structured Outputs."""
+    tipo = (
+        "short"
+        if tipo_forcado == "short"
+        else "longo"
+        if tipo_forcado == "longo"
+        else inferir_tipo_projeto(pasta_projeto)
+    )
+    formato: Literal["16:9", "9:16"] = "9:16" if tipo == "short" else "16:9"
 
-    # Procura a fonte de prompts na ordem: projeto/prompts_imagens.txt -> 04-storyboard-e-prompts.md -> raiz/prompts_imagens.txt
-    candidatos = [
-        pasta_projeto / "prompts_imagens.txt",
-        pasta_projeto / "04-storyboard-e-prompts.md",
-        raiz / "prompts_imagens.txt",
+    prompts_path = pasta_projeto / "prompts_imagens.txt"
+    tempos_path = pasta_projeto / "tempos_imagens.txt"
+    if not prompts_path.exists():
+        raise ValueError("Arquivo prompts_imagens.txt não encontrado neste projeto.")
+
+    prompts = [
+        limpar_prefixo_timestamp(l)
+        for l in prompts_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if l.strip()
     ]
-    linhas_brutas: list[str] = []
-    fonte_usada = ""
-    for cand in candidatos:
-        if cand.exists():
-            linhas = [l.strip() for l in cand.read_text(encoding="utf-8").splitlines() if l.strip()]
-            com_ts = [l for l in linhas if re.match(r"^\[\d{2}:\d{2}\]", l)]
-            if com_ts:
-                linhas_brutas = com_ts
-                fonte_usada = cand.name
-                break
-            elif linhas and cand.name == "prompts_imagens.txt" and not linhas_brutas:
-                linhas_brutas = linhas
-                fonte_usada = cand.name
+    if not prompts:
+        raise ValueError("prompts_imagens.txt está vazio.")
 
-    if not linhas_brutas:
-        raise ValueError(
-            "Nenhum prompt encontrado em prompts_imagens.txt ou 04-storyboard-e-prompts.md deste projeto."
-        )
+    tempos: list[tuple[float, float]] = []
+    if tempos_path.exists():
+        for linha in tempos_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            partes = linha.strip().split("\t")
+            if len(partes) >= 3:
+                try:
+                    tempos.append((float(partes[1]), float(partes[2])))
+                except ValueError:
+                    pass
 
-    # Carrega transcrição palavra por palavra e duração total do áudio (se disponível)
-    palavras_ts: list[dict[str, Any]] = []
-    duracao_audio = 0.0
-    ts_path = pasta_projeto / "03-timestamps.json"
-    if ts_path.exists():
-        ts_data = json.loads(ts_path.read_text(encoding="utf-8"))
-        duracao_audio = float(ts_data.get("duracao_total") or 0.0)
-        for seg in ts_data.get("segmentos") or []:
-            for w in seg.get("palavras") or []:
-                txt = str(w.get("palavra", "")).strip()
-                if txt:
-                    palavras_ts.append(
-                        {
-                            "palavra": txt,
-                            "inicio": float(w.get("inicio", 0.0)),
-                            "fim": float(w.get("fim", 0.0)),
-                        }
-                    )
+    if len(tempos) != len(prompts):
+        dur_padrao = 2.0 if formato == "9:16" else 3.2
+        tempos = [(round(i * dur_padrao, 2), round((i + 1) * dur_padrao, 2)) for i in range(len(prompts))]
 
-    # Fallback de texto de narração se não houver 03-timestamps.json
-    nar_path = pasta_projeto / "02-narracao.txt"
-    narracao_palavras = (
-        nar_path.read_text(encoding="utf-8").strip().split()
-        if nar_path.exists()
-        else []
+    narracao = (
+        (pasta_projeto / "02-narracao.txt").read_text(encoding="utf-8", errors="replace").strip()
+        if (pasta_projeto / "02-narracao.txt").exists()
+        else ""
+    )
+    assets, assets_por_id, catalogo_assets = _montar_catalogo_assets()
+
+    lista_prompts_txt = "\n".join(
+        f"[{idx}] ({tempos[idx][0]:.2f}s-{tempos[idx][1]:.2f}s) {p}"
+        for idx, p in enumerate(prompts)
+    )
+    user_prompt = (
+        f"FORMATO: {formato} ({tipo})\n"
+        f"Distribua a narração entre os {len(prompts)} prompts salvos abaixo, gerando legendas coloridas (`branco`, `canal`, `alerta`), "
+        f"efeito de câmera variado e personagem da biblioteca (sem repetir asset consecutivo).\n\n"
+        f"BIBLIOTECA DE ASSETS:\n{catalogo_assets}\n\n"
+        f"NARRAÇÃO:\n{narracao or '(sem narração escrita)'}\n\n"
+        f"PROMPTS SALVOS:\n{lista_prompts_txt}"
     )
 
-    tem_timestamps_no_txt = all(re.match(r"^\[\d{2}:\d{2}\]", l) for l in linhas_brutas)
-    inicios: list[float] = []
-    if tem_timestamps_no_txt:
-        inicios = [_parsear_mm_ss(l) for l in linhas_brutas]
-        if inicios:
-            inicios[0] = 0.0
-        # Garante estrita monotonicidade se houver algum empate
-        for i in range(1, len(inicios)):
-            if inicios[i] <= inicios[i - 1]:
-                inicios[i] = round(inicios[i - 1] + 1.5, 2)
-    else:
-        dur_base = duracao_audio if duracao_audio > 0 else len(linhas_brutas) * 2.0
-        passo = dur_base / len(linhas_brutas)
-        inicios = [round(i * passo, 2) for i in range(len(linhas_brutas))]
-
-    duracao_total = round(
-        max(duracao_audio, (inicios[-1] + 2.0) if inicios else 0.0),
-        2,
+    res, modelo_usado = gerar_estruturado(
+        ROOT_DIR,
+        user_prompt,
+        CenasDePromptsSchema,
+        temperature=0.55,
     )
+    mapa_ai = {c.indice_cena: c for c in res.cenas}
 
-    efeitos_alternados = ["zoom-in", "zoom-out", "impact-pop"]
-    seletor = SeletorPersonagem(formato=formato)
-    cenas_json_lista: list[dict[str, Any]] = []
-    palavra_cursor = 0
-
-    for idx, linha in enumerate(linhas_brutas, start=1):
-        inicio = round(inicios[idx - 1], 2)
-        fim = round(inicios[idx], 2) if idx < len(inicios) else duracao_total
-        if fim <= inicio:
-            fim = round(inicio + 1.5, 2)
-
-        prompt_limpo = limpar_prefixo_timestamp(linha)
-        efeito = efeitos_alternados[(idx - 1) % len(efeitos_alternados)]
-
-        palavras_cena: list[dict[str, Any]] = []
-        eh_ultima_cena = idx == len(linhas_brutas)
-        while palavra_cursor < len(palavras_ts):
-            w = palavras_ts[palavra_cursor]
-            meio = (w["inicio"] + w["fim"]) / 2.0
-            if eh_ultima_cena or meio < fim:
-                palavras_cena.append(w)
-                palavra_cursor += 1
-            else:
-                break
-
-        if palavras_cena:
-            fala = " ".join(w["palavra"] for w in palavras_cena).strip()
-            legendas = _gerar_blocos_legenda(fala, inicio, fim, palavras_cena)
-        elif narracao_palavras:
-            p_ini = (len(narracao_palavras) * (idx - 1)) // len(linhas_brutas)
-            p_fim = (len(narracao_palavras) * idx) // len(linhas_brutas)
-            fala = " ".join(narracao_palavras[p_ini:p_fim]).strip()
-            legendas = _gerar_blocos_legenda(fala, inicio, fim) if fala else []
-        else:
-            fala = ""
-            legendas = []
-
-        cenas_json_lista.append(
-            _montar_cena(
-                inicio=inicio,
-                fim=fim,
-                efeito=efeito,
-                fala=fala,
-                legendas=legendas,
-                arquivo=f"assets_atual/cenas/cena_{idx:02d}.png",
-                prompt_fundo=prompt_limpo,
-                seletor=seletor,
-                tags_pose=_tags_pose_por_fala(fala),
-            )
+    cenas_montadas: list[dict[str, Any]] = []
+    ultimo_asset_id: str | None = None
+    for idx, prompt_bruto in enumerate(prompts):
+        t_ini, t_fim = tempos[idx]
+        c_ai = mapa_ai.get(idx)
+        texto_fala = c_ai.texto.strip() if c_ai and c_ai.texto.strip() else ""
+        arquivo_rel = f"assets_atual/cenas/cena_{idx + 1:02d}.png"
+        prompt_normalizado = normalizar_prompt_fundo(prompt_bruto, formato)
+        prompt_personagem = normalizar_prompt_personagem(
+            c_ai.personagem_acao_descricao if c_ai else "",
+            quem=c_ai.personagem_quem if c_ai else "protagonista",
+            enquadramento=c_ai.personagem_enquadramento if c_ai else "medium shot",
+            formato=formato,
         )
 
-    cenas_payload = {
+        pers_obj, ultimo_asset_id = _resolver_personagem_cena(
+            asset_id=c_ai.personagem_asset_id if c_ai else "",
+            posicao=c_ai.personagem_posicao if c_ai else ("center" if formato == "9:16" else "bottom-corner"),
+            escala=c_ai.personagem_escala if c_ai else 0.92,
+            flip=c_ai.personagem_flip if c_ai else False,
+            animacao=c_ai.personagem_animacao if c_ai else "pop-in",
+            tags=c_ai.tags if c_ai else [],
+            assets=assets,
+            assets_por_id=assets_por_id,
+            ultimo_asset_id=ultimo_asset_id,
+            formato=formato,
+        )
+        pers_obj["prompt"] = prompt_personagem
+        legendas = _distribuir_legendas_sem_timestamps(
+            c_ai.legendas if c_ai else [],
+            texto_fala,
+            t_ini,
+            t_fim,
+        )
+        cenas_montadas.append(
+            {
+                "arquivo": arquivo_rel,
+                "inicio": round(t_ini, 2),
+                "fim": round(t_fim, 2),
+                "efeito": c_ai.efeito if c_ai else "cut",
+                "texto": texto_fala,
+                "narracao": texto_fala,
+                "legendas": legendas,
+                "escala": max(1.0, min(1.1, round(float(c_ai.escala_fundo if c_ai else 1.03), 2))),
+                "prompt_fundo": prompt_normalizado,
+                "prompt_personagem": prompt_personagem,
+                "fundo": {"arquivo": arquivo_rel, "prompt": prompt_normalizado},
+                "personagem": pers_obj,
+            }
+        )
+
+    duracao_total = round(tempos[-1][1], 2)
+    cenas_config: dict[str, Any] = {
         "projeto": pasta_projeto.name,
         "formato": formato,
-        "versao_schema": SCHEMA_VERSAO,
         "fps": 30,
         "duracao_total": duracao_total,
         "audio": "assets_atual/audio.wav",
-        "cenas": cenas_json_lista,
+        "versao_schema": 2,
+        "mostrar_legendas": True,
+        "cenas": cenas_montadas,
+    }
+    _salvar_arquivos_storyboard(pasta_projeto, cenas_config, sincronizar_raiz=sincronizar_raiz)
+    return {
+        "ok": True,
+        "fonte": "prompts_imagens.txt",
+        "formato": formato,
+        "duracao_total": duracao_total,
+        "qtd_cenas": len(cenas_montadas),
+        "modelo_ia": modelo_usado,
+        "cenas": cenas_config,
     }
 
-    (pasta_projeto / "cenas.json").write_text(
-        json.dumps(cenas_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+
+def gerar_ideias_ou_roteiro(
+    pasta_projeto: Path,
+    tema: str,
+    modo: Literal["ideias", "roteiro"] = "roteiro",
+    tipo_forcado: str | None = None,
+    salvar: bool = True,
+) -> dict[str, Any]:
+    """Gera 3 ângulos críticos ou a narração pura completa usando regras editoriais do canal."""
+    tema_limpo = tema.strip()
+    if not tema_limpo:
+        raise ValueError("Informe um tema ou premissa para o Gemini gerar o conteúdo.")
+
+    tipo = (
+        "short"
+        if tipo_forcado == "short"
+        else "longo"
+        if tipo_forcado == "longo"
+        else inferir_tipo_projeto(pasta_projeto)
     )
+    regra_editorial = _ler_regra_agente("01-identidade-e-roteiro.md")
+
+    if modo == "ideias":
+        prompt = (
+            f"FORMATO ALVO: {'Short (30-60s)' if tipo == 'short' else 'Vídeo Longo (5-8 min)'}\n"
+            f"PREMISSA DO USUÁRIO: {tema_limpo}\n\n"
+            f"Critique honestamente se a premissa for genérica e proponha 3 ângulos bem específicos e identificáveis."
+        )
+        res, modelo = gerar_estruturado(
+            ROOT_DIR,
+            prompt,
+            IdeiasRoteiroSchema,
+            system_instruction=regra_editorial,
+            temperature=0.8,
+        )
+        linhas = [
+            f"# Ideias e Ângulos - {pasta_projeto.name}",
+            "",
+            f"**Premissa:** {tema_limpo}",
+            "",
+            f"## Diagnóstico",
+            res.diagnostico_premissa,
+            "",
+        ]
+        for i, ang in enumerate(res.angulos, start=1):
+            linhas.extend(
+                [
+                    f"## Ângulo {i}: {ang.titulo_angulo}",
+                    f"- **Gancho inicial:** {ang.gancho_inicial}",
+                    f"- **Escalada e descoberta:** {ang.desenvolvimento_resumo}",
+                    f"- **Fechamento / Loop:** {ang.fechamento_loop}",
+                    f"- **Por que funciona:** {ang.por_que_funciona}",
+                    "",
+                ]
+            )
+        md = "\n".join(linhas).strip() + "\n"
+        if salvar:
+            (pasta_projeto / "01-ideia-e-roteiro.md").write_text(md, encoding="utf-8")
+        return {
+            "ok": True,
+            "modo": "ideias",
+            "modelo_ia": modelo,
+            "conteudo": md,
+            "dados": res.model_dump(),
+        }
+
+    ideia_salva = ""
+    ideia_path = pasta_projeto / "01-ideia-e-roteiro.md"
+    if ideia_path.exists():
+        ideia_salva = ideia_path.read_text(encoding="utf-8", errors="replace").strip()
+
+    prompt = (
+        f"FORMATO ALVO: {'Short de 30 a 60 segundos (aprox. 90-160 palavras) com loop final conectando ao início.' if tipo == 'short' else 'Vídeo Longo de 5 a 8 minutos (aprox. 750-1200 palavras).'}\n"
+        f"TEMA / INSTRUÇÃO: {tema_limpo}\n\n"
+        f"ANOTAÇÕES DO PROJETO:\n{ideia_salva or '(nenhuma)'}\n\n"
+        f"Escreva APENAS o texto puro da narração em `narracao_pura`, pronto para gravar em voz alta. Zero colchetes ou rubricas."
+    )
+    res, modelo = gerar_estruturado(
+        ROOT_DIR,
+        prompt,
+        RoteiroNarracaoSchema,
+        system_instruction=regra_editorial,
+        temperature=0.75,
+    )
+    narracao_limpa = res.narracao_pura.strip()
+    if salvar:
+        (pasta_projeto / "02-narracao.txt").write_text(narracao_limpa + "\n", encoding="utf-8")
+    return {
+        "ok": True,
+        "modo": "roteiro",
+        "modelo_ia": modelo,
+        "conteudo": narracao_limpa,
+        "palavras": len(narracao_limpa.split()),
+        "dados": res.model_dump(),
+    }
+
+
+def gerar_seo_e_thumb(
+    pasta_projeto: Path,
+    tipo_forcado: str | None = None,
+    salvar: bool = True,
+) -> dict[str, Any]:
+    """Gera títulos, SEO multiplataforma e prompt de thumbnail Paper Billions via Gemini."""
+    tipo = (
+        "short"
+        if tipo_forcado == "short"
+        else "longo"
+        if tipo_forcado == "longo"
+        else inferir_tipo_projeto(pasta_projeto)
+    )
+    regra_seo = _ler_regra_agente("03-thumbs-e-seo.md")
+    narracao = (
+        (pasta_projeto / "02-narracao.txt").read_text(encoding="utf-8", errors="replace").strip()
+        if (pasta_projeto / "02-narracao.txt").exists()
+        else ""
+    )
+    ideia = (
+        (pasta_projeto / "01-ideia-e-roteiro.md").read_text(encoding="utf-8", errors="replace").strip()
+        if (pasta_projeto / "01-ideia-e-roteiro.md").exists()
+        else ""
+    )
+    if not narracao and not ideia:
+        raise ValueError("Escreva primeiro a narração (02-narracao.txt) ou a ideia do vídeo para gerar SEO e Thumbnail.")
+
+    prompt = (
+        f"PROJETO: {pasta_projeto.name}\n"
+        f"FORMATO: {'Short (9:16)' if tipo == 'short' else 'Vídeo Longo (16:9)'}\n\n"
+        f"NARRAÇÃO DO VÍDEO:\n{narracao or ideia}\n\n"
+        f"Gere título recomendado, 3 alternativas, prompt de thumbnail em inglês 16:9 estilo Paper Billions "
+        f"(com objeto luminoso/MacGuffin exclusivo deste tema específico), descrição, tags, legenda de Short e comentário fixado."
+    )
+    res, modelo = gerar_estruturado(
+        ROOT_DIR,
+        prompt,
+        SeoThumbSchema,
+        system_instruction=regra_seo,
+        temperature=0.7,
+    )
+
+    md_linhas = [
+        f"# SEO e Thumbnail - {pasta_projeto.name}",
+        "",
+        "## Título Principal Recomendado",
+        f"Motivo: {res.motivo_titulo}",
+        "```text",
+        res.titulo_principal,
+        "```",
+        "",
+        "## Títulos Alternativos",
+        *[f"- {alt}" for alt in res.titulos_alternativos],
+        "",
+        "## Texto na Thumbnail",
+        "```text",
+        res.texto_na_thumb,
+        "```",
+        "",
+        "## Prompt da Thumbnail (Paper Billions 16:9)",
+        "```text",
+        res.prompt_thumb_16_9,
+        "```",
+        "",
+        "## Prompt da Thumbnail Sem Texto (16:9)",
+        "```text",
+        res.prompt_thumb_sem_texto_16_9,
+        "```",
+        "",
+        "## Descrição YouTube",
+        "```text",
+        res.descricao_youtube,
+        "```",
+        "",
+        "## Tags YouTube",
+        "```text",
+        ", ".join(res.tags_youtube),
+        "```",
+        "",
+        "## Legenda e Hashtags (Shorts / Reels / TikTok)",
+        "```text",
+        f"{res.legenda_short}\n\n{res.hashtags_short}",
+        "```",
+        "",
+        "## Comentário Fixado",
+        "```text",
+        res.comentario_fixado,
+        "```",
+    ]
+    md = "\n".join(md_linhas).strip() + "\n"
+
+    if salvar:
+        (pasta_projeto / "05-seo-e-thumb.md").write_text(md, encoding="utf-8")
+        salvar_meta_projeto(
+            pasta_projeto,
+            tipo,
+            extras={
+                "titulo_thumb": res.titulo_principal,
+                "legenda_short": res.legenda_short,
+                "hashtags_short": res.hashtags_short,
+            },
+        )
 
     return {
         "ok": True,
-        "fonte": fonte_usada,
+        "modelo_ia": modelo,
+        "markdown": md,
+        "dados": res.model_dump(),
+    }
+
+
+def montar_pacote_chat(pasta_projeto: Path, tipo_forcado: str | None = None) -> dict[str, Any]:
+    """Monta pacote textual de contexto caso o usuário queira inspecionar ou colar externamente."""
+    tipo = (
+        "short"
+        if tipo_forcado == "short"
+        else "longo"
+        if tipo_forcado == "longo"
+        else inferir_tipo_projeto(pasta_projeto)
+    )
+    formato = "9:16" if tipo == "short" else "16:9"
+    narracao = (
+        (pasta_projeto / "02-narracao.txt").read_text(encoding="utf-8", errors="replace").strip()
+        if (pasta_projeto / "02-narracao.txt").exists()
+        else ""
+    )
+    ts_path = pasta_projeto / "03-timestamps.json"
+    duracao_total = 0.0
+    segmentos: list[dict[str, Any]] = []
+    if ts_path.exists():
+        ts_data = json.loads(ts_path.read_text(encoding="utf-8"))
+        duracao_total = float(ts_data.get("duracao_total", 0.0))
+        segmentos = ts_data.get("segmentos", [])
+    elif not narracao:
+        raise ValueError("Projeto sem 03-timestamps.json nem 02-narracao.txt.")
+
+    pacote = (
+        f"PROJETO: {pasta_projeto.name} ({formato})\n"
+        f"PREFIXO OBRIGATÓRIO DE FUNDO:\n{PROMPT_PREFIXO_PADRAO}\n"
+        f"REGRA: zero palavras negativas após o prefixo.\n\n"
+        f"NARRAÇÃO:\n{narracao}"
+    )
+    return {
+        "ok": True,
+        "projeto": pasta_projeto.name,
+        "tipo": tipo,
         "formato": formato,
-        "duracao_total": duracao_total,
-        "qtd_cenas": len(cenas_json_lista),
-        "cenas": cenas_payload,
+        "duracao_total": round(duracao_total, 2),
+        "qtd_cortes": len(segmentos),
+        "origem": "timestamps" if segmentos else "narracao",
+        "pacote": pacote,
     }

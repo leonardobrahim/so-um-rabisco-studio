@@ -1,9 +1,14 @@
 import type {
   BibliotecaPersonagem,
   CenasConfig,
+  ComfyGerarPayload,
+  ComfyJobStatus,
+  ComfyStatus,
+  GeminiStatus,
   ProjetoMeta,
   ProjetoResumo,
   ProjetoTipo,
+  SeoThumbDados,
   TimestampsData,
 } from "./types";
 
@@ -31,6 +36,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  geminiStatus: () => request<GeminiStatus>("/api/gemini/status"),
+
   listarProjetos: () => request<{ projetos: ProjetoResumo[] }>("/api/projetos"),
 
   criarProjeto: (nome: string, tipo: ProjetoTipo = "longo") =>
@@ -39,6 +46,22 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ nome, tipo }),
     }),
+
+  excluirProjeto: (nome: string) =>
+    request<{ ok: boolean; projeto: string }>(
+      `/api/projetos/${encodeURIComponent(nome)}`,
+      { method: "DELETE" }
+    ),
+
+  renomearProjeto: (nome: string, novoNome: string) =>
+    request<{ ok: boolean; nome_antigo: string; projeto: ProjetoResumo }>(
+      `/api/projetos/${encodeURIComponent(nome)}/renomear`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ novo_nome: novoNome }),
+      }
+    ),
 
   lerMeta: (nome: string) =>
     request<{ meta: ProjetoMeta }>(
@@ -103,6 +126,49 @@ export const api = {
       storyboard: string;
     }>(
       `/api/projetos/${encodeURIComponent(nome)}/gerar-storyboard${
+        tipo ? `?tipo=${tipo}` : ""
+      }`,
+      { method: "POST" }
+    ),
+
+  gerarRoteiro: (
+    nome: string,
+    payload: {
+      tema: string;
+      modo: "ideias" | "roteiro";
+      tipo?: ProjetoTipo;
+      salvar?: boolean;
+    }
+  ) =>
+    request<{
+      ok: boolean;
+      modo: "ideias" | "roteiro";
+      modelo_ia: string;
+      conteudo: string;
+      palavras?: number;
+      dados: Record<string, unknown>;
+    }>(`/api/projetos/${encodeURIComponent(nome)}/gerar-roteiro`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+
+  lerSeoThumb: (nome: string) =>
+    request<{
+      nome: string;
+      existe: boolean;
+      markdown: string;
+      meta: ProjetoMeta;
+    }>(`/api/projetos/${encodeURIComponent(nome)}/seo-thumb`),
+
+  gerarSeoThumb: (nome: string, tipo?: ProjetoTipo) =>
+    request<{
+      ok: boolean;
+      modelo_ia: string;
+      markdown: string;
+      dados: SeoThumbDados;
+    }>(
+      `/api/projetos/${encodeURIComponent(nome)}/gerar-seo-thumb${
         tipo ? `?tipo=${tipo}` : ""
       }`,
       { method: "POST" }
@@ -225,6 +291,61 @@ export const api = {
       }
     ),
 
+  uploadPersonagemAsset: (
+    file: File,
+    opcoes?: {
+      pasta?: string;
+      modo?: "auto" | "poses" | "sprite";
+      fps?: number;
+      frames?: number;
+      removerFundo?: boolean;
+    }
+  ) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("pasta", opcoes?.pasta || "custom");
+    form.append("modo", opcoes?.modo || "auto");
+    form.append("fps", String(opcoes?.fps ?? 8));
+    form.append("frames", String(opcoes?.frames ?? 1));
+    form.append("remover_fundo", String(opcoes?.removerFundo ?? true));
+    return request<{ ok: boolean; asset_id: string; tipo: "pose" | "sprite" } & BibliotecaPersonagem>(
+      "/api/personagem/upload",
+      { method: "POST", body: form }
+    );
+  },
+
+  excluirPersonagemAsset: (asset: string, fonte = "protagonista") =>
+    request<{ ok: boolean } & BibliotecaPersonagem>(
+      `/api/personagem/asset?asset=${encodeURIComponent(asset)}&fonte=${encodeURIComponent(fonte)}`,
+      { method: "DELETE" }
+    ),
+
+  uploadImagemCena: (nome: string, arquivoAlvo: string, file: File) => {
+    const form = new FormData();
+    form.append("arquivo_alvo", arquivoAlvo);
+    form.append("file", file);
+    return request<{ ok: boolean; arquivo: string; cenas_geradas: string[] }>(
+      `/api/projetos/${encodeURIComponent(nome)}/imagens/cena`,
+      { method: "POST", body: form }
+    );
+  },
+
+  reordenarImagens: (nome: string, ordem: string[]) =>
+    request<{ ok: boolean; cenas_geradas: string[] }>(
+      `/api/projetos/${encodeURIComponent(nome)}/imagens/reordenar`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ordem }),
+      }
+    ),
+
+  excluirImagemCena: (nome: string, arquivo: string) =>
+    request<{ ok: boolean; cenas_geradas: string[] }>(
+      `/api/projetos/${encodeURIComponent(nome)}/imagens/cena/${encodeURIComponent(arquivo)}`,
+      { method: "DELETE" }
+    ),
+
   uploadAudio: (nome: string, file: File, gerarStoryboard = true) => {
     const form = new FormData();
     form.append("file", file);
@@ -239,6 +360,7 @@ export const api = {
         formato: string;
         origem: string;
       } | null;
+      storyboard_erro?: string | null;
     }>(
       `/api/projetos/${encodeURIComponent(
         nome
@@ -292,6 +414,29 @@ export const api = {
       cacheBust ? `?t=${cacheBust}` : ""
     }`,
 
+  comfyuiStatus: () => request<ComfyStatus>("/api/comfyui/status"),
+
+  comfyuiGerar: (nome: string, payload: ComfyGerarPayload) =>
+    request<{
+      ok: boolean;
+      status: string;
+      total_cenas: number;
+      checkpoint: string;
+      mensagem?: string;
+    }>(`/api/projetos/${encodeURIComponent(nome)}/comfyui/gerar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+
+  comfyuiJobStatus: (nome: string) =>
+    request<ComfyJobStatus>(
+      `/api/projetos/${encodeURIComponent(nome)}/comfyui/status`
+    ),
+
+  comfyuiCancelar: () =>
+    request<{ ok: boolean }>("/api/comfyui/cancelar", { method: "POST" }),
+
   prepararRender: (nome: string, comLegenda = true) =>
     request<{
       ok: boolean;
@@ -332,6 +477,8 @@ export const api = {
       status: "idle" | "running" | "done" | "error";
       projeto: string;
       outro_projeto_renderizando: string | null;
+      progresso: number;
+      etapa: string;
       existe_video: boolean;
       tamanho_bytes: number | null;
       caminho_video: string;

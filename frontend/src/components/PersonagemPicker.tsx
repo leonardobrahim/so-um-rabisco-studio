@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   X,
   Search,
@@ -8,13 +8,15 @@ import {
   Check,
   Loader2,
   UserX,
-  Film,
-  Image as ImageIcon,
+  Upload,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
 } from "lucide-react";
 import { api } from "../api";
 import type {
   BibliotecaAsset,
-  BibliotecaPasta,
   BibliotecaPersonagem,
   CenaItem,
   CenaPersonagem,
@@ -48,9 +50,13 @@ interface Props {
   projetoNome: string;
   formato: string;
   indiceCena: number;
+  totalCenas?: number;
   cena: CenaItem;
   temImagemFundo: boolean;
   biblioteca: BibliotecaPersonagem;
+  cacheBust?: number;
+  onTrocarFundo?: (file: File) => void;
+  onMudarCena?: (novoIdx: number) => void;
   onAtualizarCena: (patch: Partial<CenaItem>) => void;
   onBibliotecaAtualizada: (nova: BibliotecaPersonagem) => void;
   onFechar: () => void;
@@ -60,9 +66,13 @@ export function PersonagemPicker({
   projetoNome,
   formato,
   indiceCena,
+  totalCenas = 0,
   cena,
   temImagemFundo,
   biblioteca,
+  cacheBust,
+  onTrocarFundo,
+  onMudarCena,
   onAtualizarCena,
   onBibliotecaAtualizada,
   onFechar,
@@ -73,16 +83,67 @@ export function PersonagemPicker({
   );
   const [editandoTagsId, setEditandoTagsId] = useState<string | null>(null);
   const [tagsDraft, setTagsDraft] = useState("");
-  const [editandoPasta, setEditandoPasta] = useState<BibliotecaPasta | null>(
-    null
-  );
-  const [pastaTagsDraft, setPastaTagsDraft] = useState("");
-  const [pastaFpsDraft, setPastaFpsDraft] = useState(8);
-  const [pastaModoDraft, setPastaModoDraft] = useState<"poses" | "sprite">(
-    "poses"
-  );
   const [salvandoMeta, setSalvandoMeta] = useState(false);
+  const [enviandoAsset, setEnviandoAsset] = useState(false);
+  const [dragDropAsset, setDragDropAsset] = useState(false);
+  const [copiadoCampo, setCopiadoCampo] = useState<"fundo" | "personagem" | null>(null);
   const [erroMeta, setErroMeta] = useState<string | null>(null);
+  const uploadAssetRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    api
+      .listarBibliotecaPersonagem()
+      .then((bib) => onBibliotecaAtualizada(bib))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toUpperCase();
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      if (e.key === "ArrowLeft" && onMudarCena && indiceCena > 0) {
+        e.preventDefault();
+        onMudarCena(indiceCena - 1);
+      } else if (e.key === "ArrowRight" && onMudarCena && indiceCena + 1 < totalCenas) {
+        e.preventDefault();
+        onMudarCena(indiceCena + 1);
+      } else if (e.key === "Escape") {
+        onFechar();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [indiceCena, totalCenas, onMudarCena, onFechar]);
+
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          const blob = item.getAsFile();
+          if (blob) {
+            e.preventDefault();
+            const ext = blob.type.split("/")[1]?.replace("jpeg", "jpg") || "png";
+            const nomeArq =
+              blob.name && blob.name !== "image.png"
+                ? blob.name
+                : `pose_colada_${Date.now()}.${ext}`;
+            const file = new File([blob], nomeArq, {
+              type: blob.type || "image/png",
+            });
+            void enviarNovaPoseOuSprite(file);
+            break;
+          }
+        }
+      }
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  });
 
   const personagemAtual: CenaPersonagem = cena.personagem ?? {
     tipo: "none",
@@ -110,6 +171,7 @@ export function PersonagemPicker({
         personagemAtual.animacao ||
         (asset.tipo === "sprite" ? "slide-in-left" : "pop-in"),
       tags: personagemAtual.tags ?? [],
+      prompt: personagemAtual.prompt,
     };
     if (asset.tipo === "sprite") {
       proximo.sprite = {
@@ -127,8 +189,36 @@ export function PersonagemPicker({
         tipo: "none",
         fonte: personagemAtual.fonte || "protagonista",
         tags: personagemAtual.tags ?? [],
+        prompt: personagemAtual.prompt,
       },
     });
+  }
+
+  async function enviarNovaPoseOuSprite(file: File | undefined) {
+    if (!file || !file.type.startsWith("image/")) return;
+    setEnviandoAsset(true);
+    setErroMeta(null);
+    try {
+      const res = await api.uploadPersonagemAsset(file, {
+        pasta: "custom",
+        modo: "poses",
+        removerFundo: true,
+      });
+      onBibliotecaAtualizada({
+        pastas: res.pastas,
+        assets: res.assets,
+      });
+      const novo = res.assets.find((a) => a.id === res.asset_id);
+      if (novo) selecionarAsset(novo);
+    } catch (err) {
+      setErroMeta(
+        err instanceof Error
+          ? err.message
+          : "Erro ao enviar nova pose/sprite"
+      );
+    } finally {
+      setEnviandoAsset(false);
+    }
   }
 
   const assetsFiltrados = useMemo(() => {
@@ -145,7 +235,6 @@ export function PersonagemPicker({
 
   function abrirEdicaoTagsAsset(asset: BibliotecaAsset) {
     setErroMeta(null);
-    setEditandoPasta(null);
     setEditandoTagsId(asset.id);
     setTagsDraft(asset.tags_proprias.join(", "));
   }
@@ -174,44 +263,6 @@ export function PersonagemPicker({
     }
   }
 
-  function abrirEdicaoPasta(pasta: BibliotecaPasta) {
-    setErroMeta(null);
-    setEditandoTagsId(null);
-    setEditandoPasta(pasta);
-    setPastaTagsDraft(pasta.tags_pasta.join(", "));
-    setPastaFpsDraft(pasta.fps);
-    setPastaModoDraft(pasta.modo);
-  }
-
-  async function salvarPasta() {
-    if (!editandoPasta) return;
-    setSalvandoMeta(true);
-    setErroMeta(null);
-    try {
-      const tagsPasta = pastaTagsDraft
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      const res = await api.atualizarBibliotecaPersonagem(
-        editandoPasta.pasta,
-        {
-          modo: pastaModoDraft,
-          fps: Number(pastaFpsDraft) || 8,
-          tags_pasta: tagsPasta,
-        },
-        editandoPasta.fonte
-      );
-      onBibliotecaAtualizada({ pastas: res.pastas, assets: res.assets });
-      setEditandoPasta(null);
-    } catch (err) {
-      setErroMeta(
-        err instanceof Error ? err.message : "Erro ao salvar pasta da biblioteca"
-      );
-    } finally {
-      setSalvandoMeta(false);
-    }
-  }
-
   return (
     <div
       className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
@@ -222,12 +273,36 @@ export function PersonagemPicker({
       <div className="bg-[#141821] border border-slate-700 rounded-2xl w-full max-w-6xl max-h-[92vh] flex flex-col overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between gap-3 bg-[#0e1117]">
-          <div className="min-w-0">
-            <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-[#ffc928]" />
-              Cena {String(indiceCena + 1).padStart(2, "0")} — Camada do
-              Personagem ({formato})
-            </h3>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[#ffc928]" />
+                Cena {String(indiceCena + 1).padStart(2, "0")}
+                {totalCenas > 0 ? ` de ${String(totalCenas).padStart(2, "0")}` : ""} — Camada do Personagem ({formato})
+              </h3>
+              {onMudarCena && totalCenas > 1 && (
+                <div className="flex items-center gap-1 ml-1">
+                  <button
+                    type="button"
+                    disabled={indiceCena <= 0}
+                    onClick={() => onMudarCena(indiceCena - 1)}
+                    title="Cena anterior (seta ←)"
+                    className="p-1 rounded-md border border-slate-700 bg-[#141821] hover:border-[#ffc928] disabled:opacity-35 text-slate-200 cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={indiceCena + 1 >= totalCenas}
+                    onClick={() => onMudarCena(indiceCena + 1)}
+                    title="Próxima cena (seta →)"
+                    className="p-1 rounded-md border border-slate-700 bg-[#141821] hover:border-[#ffc928] disabled:opacity-35 text-slate-200 cursor-pointer"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
             {cena.texto && (
               <p className="text-xs text-slate-400 truncate mt-0.5">
                 Fala: &ldquo;{cena.texto}&rdquo;
@@ -255,6 +330,10 @@ export function PersonagemPicker({
                 temImagemFundo={temImagemFundo}
                 assetsBiblioteca={biblioteca.assets}
                 tamanho="grande"
+                cacheBust={cacheBust}
+                onDropImagem={onTrocarFundo}
+                onMoverPersonagem={(x, y) => atualizarPersonagem({ x, y })}
+                title="Arraste o personagem para posicionar ou solte uma imagem para trocar o fundo"
               />
             </div>
 
@@ -283,20 +362,38 @@ export function PersonagemPicker({
               {personagemAtual.tipo !== "none" && (
                 <>
                   {/* Posição */}
-                  <div className="space-y-1.5">
-                    <span className="text-[11px] text-slate-400 block">
-                      Posição na tela
-                    </span>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-slate-400">
+                        Posição na tela (arraste no preview ou use os valores)
+                      </span>
+                      {typeof personagemAtual.x === "number" && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            atualizarPersonagem({ x: undefined, y: undefined })
+                          }
+                          className="text-[10px] text-[#ffc928] hover:underline cursor-pointer"
+                        >
+                          Voltar para preset
+                        </button>
+                      )}
+                    </div>
                     <div className="grid grid-cols-5 gap-1">
                       {POSICOES_PERSONAGEM.map((p) => {
                         const ativo =
+                          typeof personagemAtual.x !== "number" &&
                           (personagemAtual.posicao || "center") === p.value;
                         return (
                           <button
                             key={p.value}
                             type="button"
                             onClick={() =>
-                              atualizarPersonagem({ posicao: p.value })
+                              atualizarPersonagem({
+                                posicao: p.value,
+                                x: undefined,
+                                y: undefined,
+                              })
                             }
                             className={`px-1.5 py-1.5 rounded-lg border text-[11px] font-medium transition cursor-pointer ${
                               ativo
@@ -308,6 +405,42 @@ export function PersonagemPicker({
                           </button>
                         );
                       })}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <label className="flex items-center justify-between gap-2 bg-[#141821] border border-slate-800 rounded-lg px-2.5 py-1">
+                        <span className="text-[11px] text-slate-400">X (%)</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={personagemAtual.x ?? 50}
+                          onChange={(e) =>
+                            atualizarPersonagem({
+                              x: Math.max(0, Math.min(100, Number(e.target.value) || 0)),
+                              y: personagemAtual.y ?? 65,
+                            })
+                          }
+                          className="w-16 bg-transparent text-right font-mono text-slate-200 outline-none"
+                        />
+                      </label>
+                      <label className="flex items-center justify-between gap-2 bg-[#141821] border border-slate-800 rounded-lg px-2.5 py-1">
+                        <span className="text-[11px] text-slate-400">Y (%)</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={personagemAtual.y ?? 65}
+                          onChange={(e) =>
+                            atualizarPersonagem({
+                              x: personagemAtual.x ?? 50,
+                              y: Math.max(0, Math.min(100, Number(e.target.value) || 0)),
+                            })
+                          }
+                          className="w-16 bg-transparent text-right font-mono text-slate-200 outline-none"
+                        />
+                      </label>
                     </div>
                   </div>
 
@@ -401,13 +534,84 @@ export function PersonagemPicker({
                 </>
               )}
 
-              {(cena.fundo?.prompt || cena.prompt) && (
+              {(cena.prompt_fundo || cena.fundo?.prompt || cena.prompt) && (
                 <div className="pt-2 border-t border-slate-800 space-y-1">
-                  <span className="text-[10px] uppercase tracking-wider text-slate-500">
-                    Prompt do fundo
-                  </span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] uppercase tracking-wider text-sky-300">
+                      Prompt do fundo
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        const txt = cena.prompt_fundo || cena.fundo?.prompt || cena.prompt || "";
+                        const pEl = e.currentTarget.closest(".space-y-1")?.querySelector("p");
+                        if (pEl) {
+                          const range = document.createRange();
+                          range.selectNodeContents(pEl);
+                          const sel = window.getSelection();
+                          sel?.removeAllRanges();
+                          sel?.addRange(range);
+                        }
+                        void navigator.clipboard.writeText(txt);
+                        setCopiadoCampo("fundo");
+                        setTimeout(() => setCopiadoCampo(null), 1500);
+                      }}
+                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-200 flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiadoCampo === "fundo" ? (
+                        <>
+                          <Check className="w-2.5 h-2.5 text-emerald-400" /> Copiado
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-2.5 h-2.5" /> Copiar
+                        </>
+                      )}
+                    </button>
+                  </div>
                   <p className="text-[11px] text-slate-400 leading-relaxed max-h-24 overflow-y-auto">
-                    {cena.fundo?.prompt || cena.prompt}
+                    {cena.prompt_fundo || cena.fundo?.prompt || cena.prompt}
+                  </p>
+                </div>
+              )}
+
+              {(cena.prompt_personagem || cena.personagem?.prompt) && (
+                <div className="pt-2 border-t border-slate-800 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] uppercase tracking-wider text-[#ffc928]">
+                      Prompt do personagem (#FFFFFF)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        const txt = cena.prompt_personagem || cena.personagem?.prompt || "";
+                        const pEl = e.currentTarget.closest(".space-y-1")?.querySelector("p");
+                        if (pEl) {
+                          const range = document.createRange();
+                          range.selectNodeContents(pEl);
+                          const sel = window.getSelection();
+                          sel?.removeAllRanges();
+                          sel?.addRange(range);
+                        }
+                        void navigator.clipboard.writeText(txt);
+                        setCopiadoCampo("personagem");
+                        setTimeout(() => setCopiadoCampo(null), 1500);
+                      }}
+                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-200 flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiadoCampo === "personagem" ? (
+                        <>
+                          <Check className="w-2.5 h-2.5 text-emerald-400" /> Copiado
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-2.5 h-2.5" /> Copiar
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed max-h-24 overflow-y-auto">
+                    {cena.prompt_personagem || cena.personagem?.prompt}
                   </p>
                 </div>
               )}
@@ -415,7 +619,7 @@ export function PersonagemPicker({
           </div>
 
           {/* Coluna Direita: Biblioteca de Poses / Sprites + Editor de Tags */}
-          <div className="lg:col-span-7 flex flex-col gap-3">
+          <div className="lg:col-span-7 flex flex-col gap-3 min-h-0">
             {/* Barra de busca e filtro */}
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative flex-1 min-w-[180px]">
@@ -451,108 +655,65 @@ export function PersonagemPicker({
                   </button>
                 ))}
               </div>
+
+              <input
+                ref={uploadAssetRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  void enviarNovaPoseOuSprite(file);
+                }}
+              />
+              <button
+                type="button"
+                disabled={enviandoAsset}
+                onClick={() => uploadAssetRef.current?.click()}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#ffc928]/15 border border-[#ffc928]/40 hover:bg-[#ffc928]/25 text-[#ffc928] text-xs font-semibold cursor-pointer disabled:opacity-50"
+                title="Enviar nova imagem PNG de pose (remove fundo branco)"
+              >
+                {enviandoAsset ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Upload className="w-3.5 h-3.5" />
+                )}
+                Subir Pose PNG
+              </button>
             </div>
 
-            {/* Pastas da biblioteca (tags de pasta / modo / fps) */}
-            {biblioteca.pastas.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                <span className="text-slate-500 mr-1">Pastas (meta.json):</span>
-                {biblioteca.pastas.map((p) => (
-                  <button
-                    key={`${p.fonte}:${p.pasta}`}
-                    type="button"
-                    onClick={() => abrirEdicaoPasta(p)}
-                    className="px-2 py-0.5 rounded bg-[#0e1117] border border-slate-800 hover:border-[#ffc928]/60 text-slate-300 flex items-center gap-1 cursor-pointer"
-                    title="Editar modo, FPS e tags da pasta"
-                  >
-                    {p.modo === "sprite" ? (
-                      <Film className="w-3 h-3 text-purple-300" />
-                    ) : (
-                      <ImageIcon className="w-3 h-3 text-emerald-300" />
-                    )}
-                    <span className="truncate max-w-[160px]">{p.pasta}</span>
-                    {p.tags_pasta.length > 0 && (
-                      <span className="text-slate-500">
-                        ({p.tags_pasta.length})
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {editandoPasta && (
-              <div className="bg-[#0e1117] border border-[#ffc928]/40 rounded-xl p-3 space-y-2.5 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-200">
-                    Configurar pasta:{" "}
-                    <code className="text-[#ffc928]">{editandoPasta.pasta}</code>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setEditandoPasta(null)}
-                    className="text-slate-400 hover:text-slate-200 cursor-pointer"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                  <label className="sm:col-span-3 space-y-1">
-                    <span className="text-[11px] text-slate-400">Modo</span>
-                    <select
-                      value={pastaModoDraft}
-                      onChange={(e) =>
-                        setPastaModoDraft(e.target.value as "poses" | "sprite")
-                      }
-                      className="w-full bg-[#141821] border border-slate-700 rounded px-2 py-1 text-slate-200"
-                    >
-                      <option value="poses">poses (frames)</option>
-                      <option value="sprite">sprite (strip)</option>
-                    </select>
-                  </label>
-                  <label className="sm:col-span-2 space-y-1">
-                    <span className="text-[11px] text-slate-400">FPS</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={30}
-                      value={pastaFpsDraft}
-                      onChange={(e) =>
-                        setPastaFpsDraft(Number(e.target.value) || 8)
-                      }
-                      className="w-full bg-[#141821] border border-slate-700 rounded px-2 py-1 text-slate-200 font-mono"
-                    />
-                  </label>
-                  <label className="sm:col-span-7 space-y-1">
-                    <span className="text-[11px] text-slate-400">
-                      Tags da pasta (separadas por vírgula)
-                    </span>
-                    <input
-                      type="text"
-                      value={pastaTagsDraft}
-                      onChange={(e) => setPastaTagsDraft(e.target.value)}
-                      placeholder="andar, caminhar, correr"
-                      className="w-full bg-[#141821] border border-slate-700 rounded px-2 py-1 text-slate-200"
-                    />
-                  </label>
-                </div>
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    disabled={salvandoMeta}
-                    onClick={() => void salvarPasta()}
-                    className="px-3 py-1 rounded bg-[#ffc928] hover:bg-[#ffd452] disabled:opacity-50 text-black font-semibold flex items-center gap-1 cursor-pointer"
-                  >
-                    {salvandoMeta ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <Check className="w-3 h-3" />
-                    )}
-                    Salvar meta.json
-                  </button>
-                </div>
-              </div>
-            )}
+            {/* Zona de Drag & Drop direto para Pose */}
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragDropAsset(true);
+              }}
+              onDragLeave={() => setDragDropAsset(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragDropAsset(false);
+                void enviarNovaPoseOuSprite(e.dataTransfer.files?.[0]);
+              }}
+              onClick={() => uploadAssetRef.current?.click()}
+              className={`border border-dashed rounded-xl px-3 py-2.5 text-center text-[11px] cursor-pointer transition ${
+                dragDropAsset
+                  ? "border-[#ffc928] bg-[#ffc928]/10 text-[#ffc928]"
+                  : "border-slate-700 hover:border-[#ffc928]/60 bg-[#0e1117]/70 text-slate-400"
+              }`}
+            >
+              {enviandoAsset ? (
+                <span className="inline-flex items-center gap-1.5 text-[#ffc928]">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Processando pose (removendo fundo branco)...
+                </span>
+              ) : (
+                <span>
+                  Arraste ou aperte <strong className="text-[#ffc928]">Ctrl + V</strong> com uma imagem de{" "}
+                  <strong className="text-slate-200">Pose</strong> para adicionar e aplicar na cena (remove fundo branco automaticamente)
+                </span>
+              )}
+            </div>
 
             {erroMeta && (
               <div className="px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
@@ -574,7 +735,7 @@ export function PersonagemPicker({
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[460px] overflow-y-auto pr-1">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 auto-rows-max max-h-[52vh] overflow-y-auto pr-1.5">
                 {assetsFiltrados.map((asset) => {
                   const selecionado =
                     personagemAtual.tipo !== "none" &&
@@ -590,7 +751,7 @@ export function PersonagemPicker({
                   return (
                     <div
                       key={`${asset.fonte}:${asset.id}`}
-                      className={`rounded-xl border overflow-hidden flex flex-col bg-[#0e1117] transition ${
+                      className={`shrink-0 rounded-xl border overflow-hidden flex flex-col bg-[#0e1117] transition ${
                         selecionado
                           ? "border-[#ffc928] ring-1 ring-[#ffc928]/60"
                           : "border-slate-800 hover:border-slate-600"
@@ -599,21 +760,23 @@ export function PersonagemPicker({
                       <button
                         type="button"
                         onClick={() => selecionarAsset(asset)}
-                        className="relative aspect-square checkerboard-dark p-2 flex items-center justify-center cursor-pointer"
+                        className="relative w-full h-32 shrink-0 overflow-hidden checkerboard-dark p-2 flex items-center justify-center cursor-pointer"
                         title={`Selecionar ${asset.id}`}
                       >
                         {asset.tipo === "sprite" ? (
-                          <SpriteThumb
-                            src={assetUrl}
-                            alt={asset.id}
-                            frames={asset.frames}
-                            fps={asset.fps}
-                          />
+                          <div className="w-24 h-24 shrink-0 overflow-hidden">
+                            <SpriteThumb
+                              src={assetUrl}
+                              alt={asset.id}
+                              frames={asset.frames}
+                              fps={asset.fps}
+                            />
+                          </div>
                         ) : (
                           <img
                             src={assetUrl}
                             alt={asset.id}
-                            className="w-full h-full object-contain select-none"
+                            className="max-w-full max-h-full object-contain select-none"
                             loading="lazy"
                           />
                         )}
@@ -643,18 +806,60 @@ export function PersonagemPicker({
                           >
                             {asset.arquivo}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              editandoEste
-                                ? setEditandoTagsId(null)
-                                : abrirEdicaoTagsAsset(asset)
-                            }
-                            title="Editar tags deste asset"
-                            className="p-1 rounded text-slate-400 hover:text-[#ffc928] hover:bg-slate-800 shrink-0 cursor-pointer"
-                          >
-                            <Tag className="w-3 h-3" />
-                          </button>
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                editandoEste
+                                  ? setEditandoTagsId(null)
+                                  : abrirEdicaoTagsAsset(asset)
+                              }
+                              title="Editar tags deste asset"
+                              className="p-1 rounded text-slate-400 hover:text-[#ffc928] hover:bg-slate-800 cursor-pointer"
+                            >
+                              <Tag className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (
+                                  !window.confirm(
+                                    `Excluir "${asset.arquivo}" da biblioteca de personagens?`
+                                  )
+                                ) {
+                                  return;
+                                }
+                                setErroMeta(null);
+                                try {
+                                  const res = await api.excluirPersonagemAsset(
+                                    asset.id,
+                                    asset.fonte
+                                  );
+                                  onBibliotecaAtualizada({
+                                    pastas: res.pastas,
+                                    assets: res.assets,
+                                  });
+                                  if (
+                                    personagemAtual.asset === asset.id &&
+                                    (personagemAtual.fonte || "protagonista") ===
+                                      asset.fonte
+                                  ) {
+                                    removerPersonagem();
+                                  }
+                                } catch (err) {
+                                  setErroMeta(
+                                    err instanceof Error
+                                      ? err.message
+                                      : "Erro ao excluir pose/sprite"
+                                  );
+                                }
+                              }}
+                              title="Excluir pose/sprite da biblioteca"
+                              className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 cursor-pointer"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
                         </div>
                         <div
                           className="text-[10px] text-slate-500 truncate"

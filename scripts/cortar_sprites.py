@@ -146,6 +146,101 @@ def processar_grade(
     print(f"Concluído: {caminho_img.name} -> {len(frames_prontos)} frames salvos em {destino}")
 
 
+def detectar_grade_2x2(caminho_img: Path) -> bool:
+    """Detecta se a imagem é uma grade 2x2 (4 quadrantes separados no centro) ou uma pose solo."""
+    img_bgr = ler_imagem_windows(caminho_img)
+    if img_bgr is None:
+        return False
+    h, w = img_bgr.shape[:2]
+    if h < 120 or w < 120:
+        return False
+
+    # Considera conteúdo o que não é branco/cinza muito claro de fundo ou linha fina
+    cinza = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    conteudo = cinza < 200
+
+    mid_y, mid_x = h // 2, w // 2
+    faixa_y = max(4, int(h * 0.02))
+    faixa_x = max(4, int(w * 0.02))
+
+    # Densidade de conteúdo na cruz central vs média dos 4 quadrantes
+    dens_cruz_h = float(conteudo[mid_y - faixa_y : mid_y + faixa_y, :].mean())
+    dens_cruz_v = float(conteudo[:, mid_x - faixa_x : mid_x + faixa_x].mean())
+
+    pad_y, pad_x = int(h * 0.04), int(w * 0.04)
+    quads = [
+        conteudo[pad_y : mid_y - pad_y, pad_x : mid_x - pad_x],
+        conteudo[pad_y : mid_y - pad_y, mid_x + pad_x : w - pad_x],
+        conteudo[mid_y + pad_y : h - pad_y, pad_x : mid_x - pad_x],
+        conteudo[mid_y + pad_y : h - pad_y, mid_x + pad_x : w - pad_x],
+    ]
+    dens_quads = [float(q.mean()) if q.size else 0.0 for q in quads]
+    todos_preenchidos = all(d >= 0.015 for d in dens_quads)
+    media_quads = sum(dens_quads) / 4.0
+
+    # Em pose única centralizada, o personagem cruza a faixa central; em grade 2x2 a cruz é vazia ou quase vazia
+    return todos_preenchidos and dens_cruz_h < media_quads * 0.45 and dens_cruz_v < media_quads * 0.45
+
+
+def processar_pose_solo(caminho_img: Path, destino_png: Path) -> Path:
+    """Remove o fundo branco de uma pose solo usando remover_fundo_seguro e salva PNG transparente 512x512."""
+    img_bgr = ler_imagem_windows(caminho_img)
+    if img_bgr is None:
+        raise ValueError(f"Não foi possível ler a imagem: {caminho_img}")
+
+    rgba = remover_fundo_seguro(img_bgr)
+    ys, xs = np.where(rgba[:, :, 3] > 25)
+    if len(xs) > 0 and len(ys) > 0:
+        crop = rgba[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
+    else:
+        crop = rgba
+
+    ch, cw = crop.shape[:2]
+    area_util = int(TAMANHO_QUADRO * 0.88)
+    margem_base = int(TAMANHO_QUADRO * 0.06)
+    escala = min(area_util / max(1, cw), area_util / max(1, ch))
+    nw, nh = max(1, int(cw * escala)), max(1, int(ch * escala))
+
+    pil_crop = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGRA2RGBA)).resize(
+        (nw, nh), Image.Resampling.LANCZOS
+    )
+    canvas = Image.new("RGBA", (TAMANHO_QUADRO, TAMANHO_QUADRO), (0, 0, 0, 0))
+    pos_x = (TAMANHO_QUADRO - nw) // 2
+    pos_y = TAMANHO_QUADRO - margem_base - nh
+    canvas.paste(pil_crop, (pos_x, pos_y), pil_crop)
+
+    destino_png.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(destino_png, format="PNG")
+    return destino_png
+
+
+def garantir_pose_sem_fundo(caminho_png: Path) -> bool:
+    """Se a pose PNG ainda estiver com fundo branco opaco nos cantos, remove automaticamente."""
+    if not caminho_png.is_file() or caminho_png.name == "strip.png":
+        return False
+    try:
+        with Image.open(caminho_png) as im:
+            rgba = im.convert("RGBA")
+            w, h = rgba.size
+            if w < 4 or h < 4:
+                return False
+            cantos = [
+                rgba.getpixel((0, 0)),
+                rgba.getpixel((w - 1, 0)),
+                rgba.getpixel((0, h - 1)),
+                rgba.getpixel((w - 1, h - 1)),
+            ]
+            precisa = im.mode != "RGBA" or all(
+                a >= 240 and min(r, g, b) >= 225 for r, g, b, a in cantos
+            )
+        if precisa:
+            processar_pose_solo(caminho_png, caminho_png)
+            return True
+    except Exception:
+        return False
+    return False
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Corta grades 2x2 de sprites ou poses avulsas em quadros 512x512 com fundo transparente e gera strip.png."

@@ -141,7 +141,11 @@ def _inferir_modo(nome_pasta: str) -> str:
 def _descrever_pasta(fonte: str, pasta: Path) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
     frames = sorted(pasta.glob("frame_*.png"))
     strip = pasta / "strip.png"
-    if not frames and not strip.is_file():
+    outros_pngs = sorted(
+        p for p in pasta.glob("*.png") if p.name != "strip.png" and p not in frames
+    )
+    poses_pngs = frames + outros_pngs
+    if not poses_pngs and not strip.is_file():
         return None
 
     meta = _ler_meta(pasta)
@@ -149,10 +153,10 @@ def _descrever_pasta(fonte: str, pasta: Path) -> tuple[dict[str, Any], list[dict
 
     quadro = int(meta.get("quadro") or 0)
     if quadro <= 0:
-        dim = _dimensoes_png(frames[0]) if frames else None
+        dim = _dimensoes_png(poses_pngs[0]) if poses_pngs else None
         quadro = dim[1] if dim else QUADRO_PADRAO
 
-    qtd_frames = len(frames)
+    qtd_frames = len(poses_pngs)
     if strip.is_file():
         dim_strip = _dimensoes_png(strip)
         if dim_strip and quadro > 0:
@@ -180,8 +184,8 @@ def _descrever_pasta(fonte: str, pasta: Path) -> tuple[dict[str, Any], list[dict
     assets: list[dict[str, Any]] = []
     if modo == "sprite" and strip.is_file():
         assets.append(montar("strip.png", "sprite", qtd_frames))
-    elif frames:
-        assets.extend(montar(f.name, "pose", 1) for f in frames)
+    elif poses_pngs:
+        assets.extend(montar(f.name, "pose", 1) for f in poses_pngs)
     elif strip.is_file():
         assets.append(montar("strip.png", "sprite", qtd_frames))
 

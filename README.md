@@ -11,8 +11,8 @@ Aplicativo web local e conjunto de automações para gerenciar a produção de v
   - `extrair_tempos.py` — Transcrição e timestamps por palavra/segmento via `faster-whisper`.
   - `limpar_imagens.py` — Remoção de fundo branco externo em lote com OpenCV/Pillow (ou `--manter-fundo` para vídeos longos).
   - `cortar_sprites.py` — Recorte automático de grades 2x2 em quadros `512x512` com fundo transparente e geração de `strip.png` horizontal para GSAP (use `--poses` para grades de poses avulsas com `mesma_escala=False`).
-  - `preparar_render.py` — Cópia de `cenas.json`, áudio e PNGs para `template-hyperframes/`.
-- `template-hyperframes/` — Composição HTML/GSAP para renderização do vídeo.
+  - `preparar_render.py` — Cópia de `cenas.json`, áudio e PNGs para `template-remotion/public/`.
+- `template-remotion/` — Composição em React/Remotion para renderização fluida do vídeo.
 - `preview-thumb/` — Preview standalone de thumbnail mobile.
 - `.agent/` — Regras e workflows de criação de roteiro, prompts visuais e SEO.
 - `iniciar_studio.bat` — Script para iniciar backend e frontend juntos no Windows.

@@ -362,9 +362,14 @@ function criarCamadaPersonagem(p, ehHorizontal) {
     box.className = `cena-personagem pos-${posicao}`;
     box.style.width = `${lado}px`;
     box.style.height = `${lado}px`;
-    box.style.left = `${left}px`;
-    // Os quadros 512x512 deixam ~6% de margem na base: sobe/desce para os pés ficarem rente ao fim do quadro
-    box.style.bottom = `${-Math.round(lado * 0.04)}px`;
+    if (typeof p.x === "number" && typeof p.y === "number") {
+        box.style.left = `${Math.round((p.x / 100) * compW - lado / 2)}px`;
+        box.style.top = `${Math.round((p.y / 100) * compH - lado / 2)}px`;
+    } else {
+        box.style.left = `${left}px`;
+        // Os quadros 512x512 deixam ~6% de margem na base: sobe/desce para os pés ficarem rente ao fim do quadro
+        box.style.bottom = `${-Math.round(lado * 0.04)}px`;
+    }
 
     const inner = document.createElement("div");
     inner.className = p.flip ? "personagem-inner flip" : "personagem-inner";

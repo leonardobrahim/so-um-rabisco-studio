@@ -8,6 +8,7 @@ RAIZ_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ_DIR))
 
 from backend.personagem import FONTE_PADRAO, listar_biblioteca, resolver_asset  # noqa: E402
+from scripts.cortar_sprites import garantir_pose_sem_fundo  # noqa: E402
 
 
 def encontrar_projeto_pronto(base_dir: Path) -> Path:
@@ -197,6 +198,9 @@ def _preparar_personagens(cenas_data: dict, assets_atual: Path) -> list[str]:
             personagem.pop("arquivo", None)
             continue
 
+        if personagem["tipo"] == "pose" and not Path(asset).name.startswith("frame_"):
+            garantir_pose_sem_fundo(origem)
+
         destino = assets_atual / "personagem" / fonte / asset
         destino.parent.mkdir(parents=True, exist_ok=True)
         if not destino.exists():
@@ -215,12 +219,14 @@ def _preparar_personagens(cenas_data: dict, assets_atual: Path) -> list[str]:
 
 
 def preparar(pasta_projeto: Path, template_dir: Path, com_legenda: bool | None = None):
-    assets_atual = template_dir / "assets_atual"
+    public_dir = template_dir / "public"
+    public_dir.mkdir(parents=True, exist_ok=True)
+    assets_atual = public_dir / "assets_atual"
     if assets_atual.exists():
         shutil.rmtree(assets_atual)
     assets_atual.mkdir(parents=True)
 
-    # Carrega cenas.json, garante micro-legendas sincronizadas e grava no template
+    # Carrega cenas.json, garante micro-legendas sincronizadas e grava em public/cenas.json
     cenas_origem_json = pasta_projeto / "cenas.json"
     cenas_data = json.loads(cenas_origem_json.read_text(encoding="utf-8"))
     if com_legenda is not None:
@@ -233,13 +239,10 @@ def preparar(pasta_projeto: Path, template_dir: Path, com_legenda: bool | None =
     avisos_personagem = _preparar_personagens(cenas_data, assets_atual)
     for aviso in avisos_personagem:
         print(f"[AVISO] {aviso}")
-    (template_dir / "cenas.json").write_text(
-        json.dumps(cenas_data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
 
-    # Copia audio.wav ou audio.mp3
+    # Copia audio.wav, audio.mp3 ou audio.m4a
     midia_dir = pasta_projeto / "midia"
-    nome_audio = "audio.wav"
+    nome_audio = ""
     for ext in ("audio.wav", "audio.mp3", "audio.m4a"):
         origem_audio = midia_dir / ext
         if origem_audio.exists():
@@ -247,12 +250,17 @@ def preparar(pasta_projeto: Path, template_dir: Path, com_legenda: bool | None =
             nome_audio = ext
             break
 
-    # Copia todas as imagens recortadas
+    cenas_data["tem_audio"] = bool(nome_audio)
+    cenas_data["audio"] = f"assets_atual/{nome_audio}" if nome_audio else ""
+
+    # Copia todas as imagens de fundo das cenas
     cenas_origem = midia_dir / "cenas"
     if cenas_origem.exists():
         shutil.copytree(cenas_origem, assets_atual / "cenas")
 
-    atualizar_index_html(template_dir, cenas_data, nome_audio)
+    (public_dir / "cenas.json").write_text(
+        json.dumps(cenas_data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     qtd_personagens = sum(
         1
@@ -260,7 +268,7 @@ def preparar(pasta_projeto: Path, template_dir: Path, com_legenda: bool | None =
         if isinstance(c.get("personagem"), dict) and c["personagem"].get("tipo") in ("pose", "sprite")
     )
     print(
-        f"Template pronto para renderizar o projeto: {pasta_projeto.name} "
+        f"Remotion pronto para renderizar o projeto: {pasta_projeto.name} "
         f"({cenas_data.get('formato', '9:16')}, {cenas_data.get('duracao_total', 0)}s, "
         f"{qtd_personagens} cena(s) com personagem em camada)"
     )
@@ -268,7 +276,7 @@ def preparar(pasta_projeto: Path, template_dir: Path, com_legenda: bool | None =
 
 if __name__ == "__main__":
     raiz = Path(__file__).resolve().parent.parent
-    template = raiz / "template-hyperframes"
+    template = raiz / "template-remotion"
 
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     com_legenda_flag: bool | None = None

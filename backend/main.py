@@ -9,11 +9,31 @@ import time
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from PIL import Image
 from pydantic import BaseModel
 
+from scripts.cortar_sprites import (
+    detectar_grade_2x2,
+    garantir_pose_sem_fundo,
+    processar_grade,
+    processar_pose_solo,
+)
+from scripts.limpar_imagens import remover_fundo_externo
+
+from backend.comfyui import (
+    cancelar_job as comfy_cancelar_job,
+    iniciar_geracao_comfyui,
+    obter_status_job as comfy_status_job,
+    status_comfyui,
+)
+from backend.gemini_client import (
+    GeminiConfigError,
+    GeminiGenerationError,
+    status_gemini,
+)
 from backend.personagem import (
     FONTE_PADRAO,
     atualizar_meta_pasta,
@@ -22,6 +42,8 @@ from backend.personagem import (
 )
 from backend.pipeline import (
     gerar_cenas_de_prompts_salvos,
+    gerar_ideias_ou_roteiro,
+    gerar_seo_e_thumb,
     gerar_storyboard_automatico,
     inferir_tipo_projeto,
     ler_ou_criar_meta_projeto,
@@ -33,7 +55,7 @@ from backend.pipeline import (
 ROOT_DIR = Path(__file__).resolve().parent.parent
 PROJETOS_DIR = ROOT_DIR / "projetos"
 SCRIPTS_DIR = ROOT_DIR / "scripts"
-TEMPLATE_DIR = ROOT_DIR / "template-hyperframes"
+TEMPLATE_DIR = ROOT_DIR / "template-remotion"
 
 PROJETOS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -57,6 +79,10 @@ class CriarProjetoPayload(BaseModel):
     tipo: Literal["longo", "short"] = "longo"
 
 
+class RenomearProjetoPayload(BaseModel):
+    novo_nome: str
+
+
 class AtualizarMetaPayload(BaseModel):
     tipo: Literal["longo", "short"] | None = None
     titulo_thumb: str | None = None
@@ -73,11 +99,37 @@ class CenasPayload(BaseModel):
     dados: dict[str, Any]
 
 
+class GerarRoteiroPayload(BaseModel):
+    tema: str
+    modo: Literal["ideias", "roteiro"] = "roteiro"
+    tipo: Literal["longo", "short"] | None = None
+    salvar: bool = True
+
+
+class ReordenarImagensPayload(BaseModel):
+    ordem: list[str]
+
+
 class PersonagemMetaPayload(BaseModel):
     modo: Literal["poses", "sprite"] | None = None
     fps: int | None = None
     tags_pasta: list[str] | None = None
     tags: dict[str, list[str]] | None = None
+
+
+class ComfyGerarPayload(BaseModel):
+    apenas_faltantes: bool = False
+    indice_cena: int | None = None
+    checkpoint: str | None = None
+    steps: int | None = None
+    cfg: float | None = None
+    sampler_name: str | None = None
+    scheduler: str | None = None
+    largura: int | None = None
+    altura: int | None = None
+    seed: int | None = None
+    negativo_extra: str | None = None
+    workflow_api: dict[str, Any] | None = None
 
 
 def _validar_nome_projeto(nome: str) -> str:
@@ -208,6 +260,11 @@ def health_check() -> dict[str, str]:
     return {"status": "ok", "studio": "Só um Rabisco"}
 
 
+@app.get("/api/gemini/status")
+def obter_status_gemini() -> dict[str, Any]:
+    return status_gemini(ROOT_DIR)
+
+
 @app.get("/api/projetos")
 def listar_projetos() -> dict[str, Any]:
     if not PROJETOS_DIR.exists():
@@ -236,6 +293,65 @@ def criar_projeto(payload: CriarProjetoPayload) -> dict[str, Any]:
     salvar_meta_projeto(pasta, payload.tipo)
 
     return {"projeto": _resumo_projeto(pasta)}
+
+
+@app.delete("/api/projetos/{nome}")
+def excluir_projeto(nome: str) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    with _RENDER_LOCK:
+        if _RENDER_ESTADO["status"] == "running" and _RENDER_ESTADO.get("projeto") == pasta.name:
+            raise HTTPException(
+                status_code=409,
+                detail="Este projeto está sendo renderizado no momento. Aguarde concluir antes de excluir.",
+            )
+    if comfy_status_job(pasta.name).get("status") == "running":
+        raise HTTPException(
+            status_code=409,
+            detail="Este projeto está gerando imagens no ComfyUI. Cancele antes de excluir.",
+        )
+
+    shutil.rmtree(pasta)
+    return {"ok": True, "projeto": pasta.name}
+
+
+@app.patch("/api/projetos/{nome}/renomear")
+def renomear_projeto(nome: str, payload: RenomearProjetoPayload) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    novo_nome = _validar_nome_projeto(payload.novo_nome)
+    if novo_nome == pasta.name:
+        return {"ok": True, "nome_antigo": pasta.name, "projeto": _resumo_projeto(pasta)}
+
+    with _RENDER_LOCK:
+        if _RENDER_ESTADO["status"] == "running" and _RENDER_ESTADO.get("projeto") == pasta.name:
+            raise HTTPException(
+                status_code=409,
+                detail="Este projeto está sendo renderizado no momento. Aguarde concluir antes de renomear.",
+            )
+    if comfy_status_job(pasta.name).get("status") == "running":
+        raise HTTPException(
+            status_code=409,
+            detail="Este projeto está gerando imagens no ComfyUI. Cancele antes de renomear.",
+        )
+
+    destino = (PROJETOS_DIR / novo_nome).resolve()
+    if destino.parent != PROJETOS_DIR.resolve():
+        raise HTTPException(status_code=400, detail="Nome de projeto inválido.")
+    if destino.exists():
+        raise HTTPException(status_code=409, detail=f"Já existe um projeto chamado '{novo_nome}'.")
+
+    nome_antigo = pasta.name
+    pasta.rename(destino)
+
+    cenas_path = destino / "cenas.json"
+    if cenas_path.exists():
+        try:
+            cenas_data = json.loads(cenas_path.read_text(encoding="utf-8"))
+            cenas_data["projeto"] = destino.name
+            cenas_path.write_text(json.dumps(cenas_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    return {"ok": True, "nome_antigo": nome_antigo, "projeto": _resumo_projeto(destino)}
 
 
 @app.get("/api/projetos/{nome}/meta")
@@ -340,14 +456,69 @@ def salvar_storyboard(nome: str, payload: TextoPayload) -> dict[str, Any]:
 @app.post("/api/projetos/{nome}/exportar-prompts")
 def exportar_prompts_imagens(nome: str) -> dict[str, Any]:
     pasta = _resolver_projeto(nome)
+    cenas_path = pasta / "cenas.json"
+    prompts_todos: list[str] = []
+    prompts_fundo: list[str] = []
+    prompts_pers: list[str] = []
+    tempos_linhas: list[str] = []
+
+    if cenas_path.exists():
+        try:
+            cenas_data = json.loads(cenas_path.read_text(encoding="utf-8"))
+            for idx, c in enumerate(cenas_data.get("cenas", []), start=1):
+                pf = str(c.get("prompt_fundo") or (c.get("fundo") or {}).get("prompt") or "").strip()
+                pp = str(c.get("prompt_personagem") or (c.get("personagem") or {}).get("prompt") or "").strip()
+                if pf:
+                    prompts_fundo.append(pf)
+                    prompts_todos.append(pf)
+                if pp:
+                    prompts_pers.append(pp)
+                    prompts_todos.append(pp)
+                ini = float(c.get("inicio") or 0.0)
+                fim = float(c.get("fim") or ini)
+                seg_i = max(0, int(round(ini)))
+                tempos_linhas.append(f"{idx:02d}\t{ini:.2f}\t{fim:.2f}\t[{seg_i // 60:02d}:{seg_i % 60:02d}]")
+        except Exception:
+            prompts_todos = []
+
+    if prompts_todos:
+        conteudo_txt = "\n\n".join(prompts_todos) + "\n"
+        (pasta / "prompts_imagens.txt").write_text(conteudo_txt, encoding="utf-8")
+        (ROOT_DIR / "prompts_imagens.txt").write_text(conteudo_txt, encoding="utf-8")
+        if prompts_pers:
+            (pasta / "prompts_personagens.txt").write_text(
+                "\n\n".join(prompts_pers) + "\n", encoding="utf-8"
+            )
+        if tempos_linhas:
+            tempos_txt = "\n".join(tempos_linhas) + "\n"
+            (pasta / "tempos_imagens.txt").write_text(tempos_txt, encoding="utf-8")
+            (ROOT_DIR / "tempos_imagens.txt").write_text(tempos_txt, encoding="utf-8")
+        return {
+            "ok": True,
+            "arquivo_destino": "prompts_imagens.txt",
+            "qtd_prompts": len(prompts_todos),
+        }
+
     arquivo = pasta / "04-storyboard-e-prompts.md"
     if not arquivo.exists():
         raise HTTPException(
             status_code=404,
-            detail="Arquivo 04-storyboard-e-prompts.md não encontrado neste projeto.",
+            detail="Nenhum cenas.json nem 04-storyboard-e-prompts.md encontrado neste projeto.",
         )
     conteudo = arquivo.read_text(encoding="utf-8")
     qtd_prompts = _sincronizar_prompts_imagens(conteudo)
+    if qtd_prompts == 0:
+        # Fallback caso o markdown tenha prompts sem prefixo [MM:SS]
+        linhas_prompts = [
+            l.strip()
+            for l in conteudo.splitlines()
+            if l.strip() and not l.strip().startswith(("#", "- "))
+        ]
+        if linhas_prompts:
+            txt = "\n\n".join(linhas_prompts) + "\n"
+            (pasta / "prompts_imagens.txt").write_text(txt, encoding="utf-8")
+            (ROOT_DIR / "prompts_imagens.txt").write_text(txt, encoding="utf-8")
+            qtd_prompts = len(linhas_prompts)
     return {
         "ok": True,
         "arquivo_destino": "prompts_imagens.txt",
@@ -368,13 +539,56 @@ def ler_timestamps(nome: str) -> dict[str, Any]:
     return {"existe": True, "dados": dados}
 
 
+@app.post("/api/projetos/{nome}/gerar-roteiro")
+def gerar_roteiro_endpoint(nome: str, payload: GerarRoteiroPayload) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    try:
+        return gerar_ideias_ou_roteiro(
+            pasta,
+            payload.tema,
+            modo=payload.modo,
+            tipo_forcado=payload.tipo,
+            salvar=payload.salvar,
+        )
+    except (ValueError, GeminiConfigError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GeminiGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/projetos/{nome}/seo-thumb")
+def ler_seo_thumb(nome: str) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    arquivo = pasta / "05-seo-e-thumb.md"
+    markdown = arquivo.read_text(encoding="utf-8") if arquivo.exists() else ""
+    return {
+        "nome": pasta.name,
+        "existe": arquivo.exists(),
+        "markdown": markdown,
+        "meta": ler_ou_criar_meta_projeto(pasta),
+    }
+
+
+@app.post("/api/projetos/{nome}/gerar-seo-thumb")
+def gerar_seo_thumb_endpoint(nome: str, tipo: str | None = None) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    try:
+        return gerar_seo_e_thumb(pasta, tipo_forcado=tipo, salvar=True)
+    except (ValueError, GeminiConfigError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GeminiGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.post("/api/projetos/{nome}/gerar-storyboard")
 def gerar_storyboard_endpoint(nome: str, tipo: str | None = None) -> dict[str, Any]:
     pasta = _resolver_projeto(nome)
     try:
         resultado = gerar_storyboard_automatico(pasta, tipo_forcado=tipo)
-    except ValueError as exc:
+    except (ValueError, GeminiConfigError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GeminiGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return resultado
 
 
@@ -383,8 +597,10 @@ def gerar_cenas_prompts_endpoint(nome: str, tipo: str | None = None) -> dict[str
     pasta = _resolver_projeto(nome)
     try:
         return gerar_cenas_de_prompts_salvos(pasta, tipo_forcado=tipo)
-    except ValueError as exc:
+    except (ValueError, GeminiConfigError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GeminiGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/api/projetos/{nome}/pacote-chat")
@@ -439,9 +655,14 @@ def sugerir_personagem_cenas(
     payload: CenasPayload,
     apenas_sem_personagem: bool = False,
 ) -> dict[str, Any]:
-    """Sugere pose/sprite da biblioteca para cada cena do cenas.json enviado, sem gravar em disco."""
+    """Sugere pose/sprite da biblioteca para cada cena do cenas.json enviado via Gemini, sem gravar em disco."""
     _resolver_projeto(nome)
-    alteradas = sugerir_personagens(payload.dados, apenas_sem_personagem=apenas_sem_personagem)
+    try:
+        alteradas = sugerir_personagens(payload.dados, apenas_sem_personagem=apenas_sem_personagem)
+    except (ValueError, GeminiConfigError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GeminiGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"ok": True, "alteradas": alteradas, "dados": payload.dados}
 
 
@@ -455,6 +676,8 @@ def obter_arquivo_personagem(pasta: str, arquivo: str, fonte: str = FONTE_PADRAO
     caminho = resolver_asset(fonte, f"{pasta}/{arquivo}")
     if caminho is None:
         raise HTTPException(status_code=404, detail="Asset de personagem não encontrado.")
+    if caminho.name != "strip.png" and not caminho.name.startswith("frame_"):
+        garantir_pose_sem_fundo(caminho)
     return FileResponse(caminho)
 
 
@@ -475,6 +698,101 @@ def atualizar_biblioteca_personagem(
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True, **listar_biblioteca()}
+
+
+@app.post("/api/personagem/upload")
+async def upload_asset_personagem(
+    file: UploadFile = File(...),
+    pasta: str = Form("custom"),
+    modo: Literal["auto", "poses", "sprite"] = Form("auto"),
+    fps: int = Form(8),
+    frames: int = Form(1),
+    remover_fundo: bool = Form(True),
+) -> dict[str, Any]:
+    """Faz upload de pose solo (remove fundo) ou sprite 2x2 (remove fundo, corta 4 quadros e gera strip.png animado)."""
+    import tempfile
+
+    pasta_limpa = re.sub(r"[^A-Za-z0-9_-]+", "_", pasta.strip()) or "custom"
+    nome_arq = Path(file.filename or "pose.png").stem
+    nome_limpo = re.sub(r"[^A-Za-z0-9_-]+", "_", nome_arq).strip("_") or f"asset_{int(time.time())}"
+    sprites_root = (ROOT_DIR / "assets" / "personagem" / "sprites_output").resolve()
+    sprites_root.mkdir(parents=True, exist_ok=True)
+
+    dados = await file.read()
+    if not dados:
+        raise HTTPException(status_code=400, detail="Arquivo de imagem vazio.")
+
+    ext = Path(file.filename or "img.png").suffix.lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        ext = ".png"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_img = Path(tmp_dir) / f"{nome_limpo}{ext}"
+        tmp_img.write_bytes(dados)
+
+        eh_sprite = modo == "sprite" or (modo == "auto" and detectar_grade_2x2(tmp_img))
+        if eh_sprite:
+            processar_grade(tmp_img, mesma_escala=True, pasta_saida=sprites_root)
+            pasta_sprite = sprites_root / nome_limpo
+            meta_path = pasta_sprite / "meta.json"
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    meta["fps"] = max(1, min(30, int(fps)))
+                    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+            asset_id = f"{nome_limpo}/strip.png"
+            tipo_retorno: Literal["pose", "sprite"] = "sprite"
+        else:
+            destino_dir = sprites_root / pasta_limpa
+            destino_dir.mkdir(parents=True, exist_ok=True)
+            destino_png = destino_dir / f"{nome_limpo}.png"
+            if remover_fundo:
+                processar_pose_solo(tmp_img, destino_png)
+            else:
+                from io import BytesIO
+                Image.open(BytesIO(dados)).convert("RGBA").save(destino_png, format="PNG")
+
+            meta_path = destino_dir / "meta.json"
+            meta: dict[str, Any] = {}
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                except Exception:
+                    meta = {}
+            meta["modo"] = "poses"
+            meta.setdefault("tags_pasta", [])
+            meta.setdefault("tags", {})
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            asset_id = f"{pasta_limpa}/{destino_png.name}"
+            tipo_retorno = "pose"
+
+    return {
+        "ok": True,
+        "asset_id": asset_id,
+        "tipo": tipo_retorno,
+        **listar_biblioteca(),
+    }
+
+
+@app.delete("/api/personagem/asset")
+def excluir_asset_personagem(asset: str, fonte: str = FONTE_PADRAO) -> dict[str, Any]:
+    """Exclui uma pose solo ou pasta de sprite da biblioteca de personagens."""
+    caminho = resolver_asset(fonte, asset)
+    if caminho is None:
+        raise HTTPException(status_code=404, detail="Pose/sprite não encontrado na biblioteca.")
+
+    pasta_asset = caminho.parent
+    if caminho.name == "strip.png":
+        shutil.rmtree(pasta_asset)
+    else:
+        caminho.unlink()
+        restantes = [p for p in pasta_asset.glob("*.png") if p.is_file()]
+        if not restantes:
+            shutil.rmtree(pasta_asset)
+
     return {"ok": True, **listar_biblioteca()}
 
 
@@ -503,6 +821,7 @@ async def upload_audio(
         timestamps = json.loads(timestamps_path.read_text(encoding="utf-8"))
 
     storyboard_info = None
+    storyboard_erro = None
     if gerar_storyboard and timestamps is not None:
         try:
             res_sb = gerar_storyboard_automatico(pasta)
@@ -511,8 +830,9 @@ async def upload_audio(
                 "formato": res_sb["formato"],
                 "origem": res_sb["origem"],
             }
-        except Exception:
+        except (GeminiConfigError, GeminiGenerationError, ValueError, RuntimeError) as exc:
             storyboard_info = None
+            storyboard_erro = str(exc)
 
     return {
         "ok": True,
@@ -521,6 +841,7 @@ async def upload_audio(
         "log": resultado_script["stdout"],
         "timestamps": timestamps,
         "storyboard_gerado": storyboard_info,
+        "storyboard_erro": storyboard_erro,
     }
 
 
@@ -566,29 +887,66 @@ async def upload_imagens_em_lote(
             if antigo.is_file():
                 antigo.unlink()
 
+    cenas_existentes = sorted([f for f in cenas_dir.iterdir() if f.is_file() and f.suffix.lower() == ".png"])
+    max_raw = 0
+    for f in raw_dir.iterdir():
+        if f.is_file():
+            m = re.match(r"^(\d+)_", f.name)
+            if m:
+                max_raw = max(max_raw, int(m.group(1)))
+    max_cena = 0
+    for f in cenas_existentes:
+        m = re.match(r"^cena_(\d+)\.png$", f.name, re.IGNORECASE)
+        if m:
+            max_cena = max(max_cena, int(m.group(1)))
+    proximo_raw = max(max_raw, max_cena) + 1
+
     base_ts = time.time()
     salvos: list[str] = []
+    destinos_raw: list[Path] = []
 
-    for idx, arquivo in enumerate(arquivos_validos, start=1):
-        nome_seguro = Path(arquivo.filename or f"imagem_{idx:02d}.png").name
-        destino = raw_dir / f"{idx:03d}_{nome_seguro}"
+    for idx, arquivo in enumerate(arquivos_validos):
+        nome_seguro = Path(arquivo.filename or f"imagem_{idx + 1:02d}.png").name
+        destino = raw_dir / f"{proximo_raw + idx:03d}_{nome_seguro}"
         dados = await arquivo.read()
         destino.write_bytes(dados)
-        # Garante ordem determinística por mtime conforme esperado pelo limpar_imagens.py
         ts = base_ts + idx * 0.01
         os.utime(destino, (ts, ts))
         salvos.append(destino.name)
+        destinos_raw.append(destino)
 
     meta = ler_ou_criar_meta_projeto(pasta)
-    args_limpeza = [str(raw_dir), str(cenas_dir)]
-    if meta.get("tipo") == "longo":
-        args_limpeza.append("--manter-fundo")
+    manter_fundo = meta.get("tipo") == "longo"
 
-    resultado_script = _executar_script(
-        "limpar_imagens.py",
-        args_limpeza,
-        timeout_sec=300,
-    )
+    if not limpar_anteriores and cenas_existentes:
+        # Adiciona apenas as novas imagens ao final sem reordenar nem sobrescrever as existentes
+        from PIL import ImageOps
+        logs_append: list[str] = []
+        proximo_cena = max_cena + 1
+        for offset, raw_arq in enumerate(destinos_raw):
+            nome_saida = f"cena_{proximo_cena + offset:02d}.png"
+            caminho_saida = cenas_dir / nome_saida
+            if manter_fundo:
+                with Image.open(raw_arq) as img_raw:
+                    img_corrigida = ImageOps.exif_transpose(img_raw)
+                    if img_corrigida.mode not in ("RGB", "RGBA"):
+                        img_corrigida = img_corrigida.convert("RGB")
+                    img_corrigida.save(caminho_saida, "PNG")
+            else:
+                img_limpa = remover_fundo_externo(raw_arq)
+                img_limpa.save(caminho_saida, "PNG")
+            logs_append.append(f"[OK] {raw_arq.name} -> {nome_saida}")
+        stdout_log = "\n".join(logs_append)
+    else:
+        args_limpeza = [str(raw_dir), str(cenas_dir)]
+        if manter_fundo:
+            args_limpeza.append("--manter-fundo")
+        resultado_script = _executar_script(
+            "limpar_imagens.py",
+            args_limpeza,
+            timeout_sec=300,
+        )
+        stdout_log = resultado_script["stdout"]
 
     cenas_geradas = sorted([f.name for f in cenas_dir.iterdir() if f.is_file() and f.suffix.lower() == ".png"])
 
@@ -596,8 +954,137 @@ async def upload_imagens_em_lote(
         "ok": True,
         "enviados": salvos,
         "cenas_geradas": cenas_geradas,
-        "log": resultado_script["stdout"],
+        "log": stdout_log,
     }
+
+
+@app.post("/api/projetos/{nome}/imagens/cena")
+async def upload_imagem_cena_individual(
+    nome: str,
+    arquivo_alvo: str = Form(...),
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    """Adiciona ou substitui diretamente a imagem de fundo de uma cena específica em midia/cenas/."""
+    pasta = _resolver_projeto(nome)
+    cenas_dir = pasta / "midia" / "cenas"
+    cenas_dir.mkdir(parents=True, exist_ok=True)
+
+    nome_png = Path(arquivo_alvo.replace("\\", "/")).name
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+\.png", nome_png):
+        raise HTTPException(status_code=400, detail="Nome de arquivo PNG inválido para a cena.")
+
+    dados = await file.read()
+    if not dados:
+        raise HTTPException(status_code=400, detail="Arquivo de imagem vazio.")
+
+    from io import BytesIO
+    img = Image.open(BytesIO(dados)).convert("RGBA")
+    destino = cenas_dir / nome_png
+    img.save(destino, format="PNG")
+    meta = ler_ou_criar_meta_projeto(pasta)
+    if meta.get("tipo") == "short":
+        img_limpa = remover_fundo_externo(destino)
+        img_limpa.save(destino, format="PNG")
+
+    cenas_geradas = sorted([f.name for f in cenas_dir.iterdir() if f.is_file() and f.suffix.lower() == ".png"])
+    return {
+        "ok": True,
+        "arquivo": nome_png,
+        "cenas_geradas": cenas_geradas,
+    }
+
+
+@app.put("/api/projetos/{nome}/imagens/reordenar")
+def reordenar_imagens_cenas(nome: str, payload: ReordenarImagensPayload) -> dict[str, Any]:
+    """Reordena os PNGs de midia/cenas/ e renomeia cada um para cena_XX.png conforme a nova posição."""
+    pasta = _resolver_projeto(nome)
+    cenas_dir = pasta / "midia" / "cenas"
+    if not cenas_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Pasta midia/cenas não encontrada.")
+
+    existentes = sorted([f.name for f in cenas_dir.iterdir() if f.is_file() and f.suffix.lower() == ".png"])
+    ordem_limpa: list[str] = []
+    vistos: set[str] = set()
+    for item in payload.ordem:
+        nome_png = Path(item.replace("\\", "/")).name
+        if nome_png in existentes and nome_png not in vistos:
+            ordem_limpa.append(nome_png)
+            vistos.add(nome_png)
+    # Mantém ao final quaisquer arquivos extras não listados
+    for ext in existentes:
+        if ext not in vistos:
+            ordem_limpa.append(ext)
+
+    if not ordem_limpa:
+        return {"ok": True, "cenas_geradas": []}
+
+    temps: list[tuple[Path, str]] = []
+    for idx, nome_orig in enumerate(ordem_limpa, start=1):
+        orig_path = cenas_dir / nome_orig
+        tmp_path = cenas_dir / f"__reord_{idx:04d}_{nome_orig}"
+        orig_path.rename(tmp_path)
+        temps.append((tmp_path, f"cena_{idx:02d}.png"))
+
+    for tmp_path, nome_final in temps:
+        tmp_path.rename(cenas_dir / nome_final)
+
+    cenas_geradas = sorted([f.name for f in cenas_dir.iterdir() if f.is_file() and f.suffix.lower() == ".png"])
+    return {"ok": True, "cenas_geradas": cenas_geradas}
+
+
+@app.delete("/api/projetos/{nome}/imagens/cena/{arquivo}")
+def excluir_imagem_cena(
+    nome: str,
+    arquivo: str,
+    remover_do_storyboard: bool = True,
+) -> dict[str, Any]:
+    """Exclui uma cena (PNG e opcionalmente entrada em cenas.json) e renumera as restantes em sequência."""
+    pasta = _resolver_projeto(nome)
+    cenas_dir = pasta / "midia" / "cenas"
+    nome_png = Path(arquivo.replace("\\", "/")).name
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+\.png", nome_png):
+        raise HTTPException(status_code=400, detail="Nome de arquivo PNG inválido.")
+
+    alvo_path = cenas_dir / nome_png
+    if alvo_path.exists():
+        alvo_path.unlink()
+
+    if cenas_dir.is_dir():
+        restantes = sorted([f for f in cenas_dir.iterdir() if f.is_file() and f.suffix.lower() == ".png"])
+        temps: list[tuple[Path, str]] = []
+        for idx, arq in enumerate(restantes, start=1):
+            tmp_path = cenas_dir / f"__del_{idx:04d}_{arq.name}"
+            arq.rename(tmp_path)
+            temps.append((tmp_path, f"cena_{idx:02d}.png"))
+        for tmp_path, nome_final in temps:
+            tmp_path.rename(cenas_dir / nome_final)
+
+    cenas_path = pasta / "cenas.json"
+    if remover_do_storyboard and cenas_path.exists():
+        try:
+            cenas_data = json.loads(cenas_path.read_text(encoding="utf-8"))
+            lista = cenas_data.get("cenas") or []
+            nova_lista = [
+                c
+                for c in lista
+                if Path(str((c.get("fundo") or {}).get("arquivo") or c.get("arquivo") or "").replace("\\", "/")).name != nome_png
+            ]
+            for idx, c in enumerate(nova_lista, start=1):
+                novo_rel = f"assets_atual/cenas/cena_{idx:02d}.png"
+                c["arquivo"] = novo_rel
+                if isinstance(c.get("fundo"), dict):
+                    c["fundo"]["arquivo"] = novo_rel
+            cenas_data["cenas"] = nova_lista
+            cenas_path.write_text(json.dumps(cenas_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    cenas_geradas = (
+        sorted([f.name for f in cenas_dir.iterdir() if f.is_file() and f.suffix.lower() == ".png"])
+        if cenas_dir.is_dir()
+        else []
+    )
+    return {"ok": True, "cenas_geradas": cenas_geradas}
 
 
 @app.post("/api/projetos/{nome}/imagens/reprocessar")
@@ -635,6 +1122,55 @@ def reprocessar_imagens(nome: str) -> dict[str, Any]:
         "cenas_geradas": cenas_geradas,
         "log": resultado_script["stdout"],
     }
+
+
+@app.get("/api/comfyui/status")
+def obter_status_comfyui() -> dict[str, Any]:
+    return status_comfyui(ROOT_DIR)
+
+
+@app.post("/api/comfyui/cancelar")
+def cancelar_comfyui() -> dict[str, Any]:
+    return comfy_cancelar_job(ROOT_DIR)
+
+
+@app.post("/api/projetos/{nome}/comfyui/gerar")
+def gerar_imagens_comfyui(nome: str, payload: ComfyGerarPayload) -> dict[str, Any]:
+    pasta = _resolver_projeto(nome)
+    meta = ler_ou_criar_meta_projeto(pasta)
+    formato = str(meta.get("formato") or ("9:16" if meta.get("tipo") == "short" else "16:9"))
+    manter_fundo = meta.get("tipo") == "longo"
+    try:
+        return iniciar_geracao_comfyui(
+            raiz=ROOT_DIR,
+            pasta_projeto=pasta,
+            formato=formato,
+            manter_fundo=manter_fundo,
+            apenas_faltantes=payload.apenas_faltantes,
+            indice_cena=payload.indice_cena,
+            checkpoint=payload.checkpoint,
+            steps=payload.steps,
+            cfg=payload.cfg,
+            sampler_name=payload.sampler_name,
+            scheduler=payload.scheduler,
+            largura=payload.largura,
+            altura=payload.altura,
+            seed=payload.seed,
+            negativo_extra=payload.negativo_extra,
+            workflow_api=payload.workflow_api,
+        )
+    except ConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/projetos/{nome}/comfyui/status")
+def status_geracao_comfyui(nome: str) -> dict[str, Any]:
+    _resolver_projeto(nome)
+    return comfy_status_job(nome)
 
 
 @app.get("/api/projetos/{nome}/imagens")
@@ -695,27 +1231,69 @@ _RENDER_ESTADO: dict[str, Any] = {
     "arquivo_saida": None,
     "qualidade": "looks",
     "com_legenda": True,
+    "progresso": 0,
+    "etapa": "",
     "log_linhas": [],
     "erro": None,
     "atualizado_em": 0.0,
 }
 
+_MAPA_CRF_REMOTION = {
+    "draft": 26,
+    "looks": 18,
+    "delivery": 12,
+}
 
-def _rodar_hyperframes_render(
+
+def _atualizar_progresso_remotion(linha: str) -> None:
+    low = linha.lower()
+    if "bundling" in low:
+        _RENDER_ESTADO["progresso"] = max(_RENDER_ESTADO.get("progresso", 0), 5)
+        _RENDER_ESTADO["etapa"] = "Empacotando composição Remotion"
+        return
+    if "rendered" in low or "rendering frames" in low:
+        m_frac = re.search(r"(\d+)\s*/\s*(\d+)", linha)
+        if m_frac:
+            done = int(m_frac.group(1))
+            total = max(1, int(m_frac.group(2)))
+            pct = 10 + int(round((done / total) * 75))
+            _RENDER_ESTADO["progresso"] = max(_RENDER_ESTADO.get("progresso", 0), min(85, pct))
+            _RENDER_ESTADO["etapa"] = f"Renderizando quadros ({done}/{total})"
+            return
+    if "encoding" in low or "stitching" in low or "encoded" in low:
+        m_frac = re.search(r"(\d+)\s*/\s*(\d+)", linha)
+        if m_frac:
+            done = int(m_frac.group(1))
+            total = max(1, int(m_frac.group(2)))
+            pct = 85 + int(round((done / total) * 14))
+            _RENDER_ESTADO["progresso"] = max(_RENDER_ESTADO.get("progresso", 0), min(99, pct))
+            _RENDER_ESTADO["etapa"] = f"Codificando vídeo ({done}/{total})"
+            return
+        _RENDER_ESTADO["progresso"] = max(_RENDER_ESTADO.get("progresso", 0), 88)
+        _RENDER_ESTADO["etapa"] = "Codificando vídeo final"
+        return
+    m_pct = re.search(r"(\d{1,3})%", linha)
+    if m_pct:
+        pct = max(0, min(99, int(m_pct.group(1))))
+        _RENDER_ESTADO["progresso"] = max(_RENDER_ESTADO.get("progresso", 0), pct)
+
+
+def _rodar_remotion_render(
     nome_projeto: str,
     arquivo_saida: Path,
     qualidade: str,
 ) -> None:
     npx_cmd = shutil.which("npx.cmd") or shutil.which("npx") or "npx"
+    crf = _MAPA_CRF_REMOTION.get(qualidade, 18)
     cmd = [
         npx_cmd,
-        "hyperframes",
+        "remotion",
         "render",
-        ".",
-        "-o",
+        "src/index.ts",
+        "MainVideo",
         str(arquivo_saida),
-        "-q",
-        qualidade,
+        f"--crf={crf}",
+        "--log=info",
     ]
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
@@ -737,6 +1315,7 @@ def _rodar_hyperframes_render(
             if not limpa:
                 continue
             with _RENDER_LOCK:
+                _atualizar_progresso_remotion(limpa)
                 linhas = list(_RENDER_ESTADO.get("log_linhas") or [])
                 linhas.append(limpa)
                 _RENDER_ESTADO["log_linhas"] = linhas[-30:]
@@ -746,12 +1325,14 @@ def _rodar_hyperframes_render(
         with _RENDER_LOCK:
             if codigo == 0 and arquivo_saida.is_file():
                 _RENDER_ESTADO["status"] = "done"
+                _RENDER_ESTADO["progresso"] = 100
+                _RENDER_ESTADO["etapa"] = "Render concluído"
                 _RENDER_ESTADO["erro"] = None
             else:
                 ultimas = " | ".join((_RENDER_ESTADO.get("log_linhas") or [])[-3:])
                 _RENDER_ESTADO["status"] = "error"
                 _RENDER_ESTADO["erro"] = (
-                    f"HyperFrames encerrou com código {codigo}. {ultimas}".strip()
+                    f"Remotion encerrou com código {codigo}. {ultimas}".strip()
                 )
             _RENDER_ESTADO["atualizado_em"] = time.time()
     except Exception as exc:
@@ -797,14 +1378,16 @@ def renderizar_video(
                 "arquivo_saida": str(arquivo_saida),
                 "qualidade": qualidade,
                 "com_legenda": com_legenda,
-                "log_linhas": [f"Iniciando HyperFrames ({qualidade})..."],
+                "progresso": 2,
+                "etapa": "Preparando assets e iniciando Remotion...",
+                "log_linhas": [f"Iniciando Remotion ({qualidade})..."],
                 "erro": None,
                 "atualizado_em": time.time(),
             }
         )
 
     t = threading.Thread(
-        target=_rodar_hyperframes_render,
+        target=_rodar_remotion_render,
         args=(pasta.name, arquivo_saida, qualidade),
         daemon=True,
     )
@@ -834,12 +1417,16 @@ def status_render_video(nome: str) -> dict[str, Any]:
             else None
         )
         log_linhas = list(_RENDER_ESTADO.get("log_linhas") or []) if mesmo_projeto else []
+        progresso = int(_RENDER_ESTADO.get("progresso") or 0) if mesmo_projeto else 0
+        etapa = str(_RENDER_ESTADO.get("etapa") or "") if mesmo_projeto else ""
         erro = _RENDER_ESTADO.get("erro") if mesmo_projeto else None
 
     return {
         "status": status,
         "projeto": pasta.name,
         "outro_projeto_renderizando": outro_rodando,
+        "progresso": progresso,
+        "etapa": etapa,
         "existe_video": existe_video,
         "tamanho_bytes": tamanho_bytes,
         "caminho_video": str(video_path),

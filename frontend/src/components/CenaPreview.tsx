@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import { api } from "../api";
 import type { BibliotecaAsset, CenaItem } from "../types";
 
@@ -56,6 +56,9 @@ interface CenaPreviewProps {
   temImagemFundo: boolean;
   assetsBiblioteca?: BibliotecaAsset[];
   tamanho?: "thumb" | "grande";
+  cacheBust?: number;
+  onMoverPersonagem?: (x: number, y: number) => void;
+  onDropImagem?: (file: File) => void;
   onClick?: () => void;
   title?: string;
 }
@@ -67,9 +70,15 @@ export function CenaPreview({
   temImagemFundo,
   assetsBiblioteca = [],
   tamanho = "thumb",
+  cacheBust,
+  onMoverPersonagem,
+  onDropImagem,
   onClick,
   title,
 }: CenaPreviewProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const arrastandoRef = useRef(false);
+  const [dragOverImg, setDragOverImg] = useState(false);
   const ehHorizontal = formato === "16:9";
   const nomePng = extrairNomePng(cena.fundo?.arquivo || cena.arquivo);
   const personagem = cena.personagem;
@@ -92,19 +101,36 @@ export function CenaPreview({
   const aspectRatio = ehHorizontal ? 16 / 9 : 9 / 16;
   const larguraPct = alturaPct / aspectRatio;
   const pos = personagem?.posicao || "center";
+  const temPosLivre =
+    typeof personagem?.x === "number" && typeof personagem?.y === "number";
 
   const posStyle: CSSProperties = {
     height: `${alturaPct}%`,
     width: `${larguraPct}%`,
-    bottom: `${-alturaPct * 0.04}%`,
   };
-  if (pos === "left" || pos === "bottom-left") {
-    posStyle.left = "3%";
-  } else if (pos === "right" || pos === "bottom-corner") {
-    posStyle.right = "3%";
+  if (temPosLivre) {
+    posStyle.left = `${personagem?.x}%`;
+    posStyle.top = `${personagem?.y}%`;
+    posStyle.transform = "translate(-50%, -50%)";
   } else {
-    posStyle.left = "50%";
-    posStyle.transform = "translateX(-50%)";
+    posStyle.bottom = `${-alturaPct * 0.04}%`;
+    if (pos === "left" || pos === "bottom-left") {
+      posStyle.left = "3%";
+    } else if (pos === "right" || pos === "bottom-corner") {
+      posStyle.right = "3%";
+    } else {
+      posStyle.left = "50%";
+      posStyle.transform = "translateX(-50%)";
+    }
+  }
+
+  function calcularEAtualizar(e: PointerEvent<HTMLDivElement>) {
+    if (!onMoverPersonagem || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+    const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+    onMoverPersonagem(Number(x.toFixed(1)), Number(y.toFixed(1)));
   }
 
   const assetUrl =
@@ -118,21 +144,24 @@ export function CenaPreview({
       ? "w-full aspect-video"
       : "w-full max-w-[270px] mx-auto aspect-[9/16]"
     : ehHorizontal
-    ? "w-16 h-9"
-    : "w-9 h-16";
+    ? "w-36 h-20"
+    : "w-20 h-36";
 
-  const Tag = onClick ? "button" : "div";
+  const podeArrastar = Boolean(onMoverPersonagem && temPersonagem);
+  const classBase = `relative overflow-hidden rounded border bg-white checkerboard-dark flex items-center justify-center shrink-0 transition ${dimensaoClasse} ${
+    dragOverImg
+      ? "border-[#ffc928] ring-2 ring-[#ffc928]/60"
+      : "border-slate-700"
+  } ${
+    podeArrastar
+      ? "cursor-grab active:cursor-grabbing select-none touch-none"
+      : onClick
+      ? "cursor-pointer hover:border-[#ffc928] group"
+      : ""
+  }`;
 
-  return (
-    <Tag
-      {...(onClick ? { type: "button" as const, onClick } : {})}
-      title={title}
-      className={`relative overflow-hidden rounded border border-slate-700 bg-white checkerboard-dark flex items-center justify-center shrink-0 ${dimensaoClasse} ${
-        onClick
-          ? "cursor-pointer hover:border-[#ffc928] transition group"
-          : ""
-      }`}
-    >
+  const conteudo = (
+    <>
       {/* Fundo */}
       {temImagemFundo ? (
         <div
@@ -143,7 +172,7 @@ export function CenaPreview({
           }`}
         >
           <img
-            src={api.imagemCenaUrl(projetoNome, nomePng)}
+            src={api.imagemCenaUrl(projetoNome, nomePng, cacheBust)}
             alt={nomePng}
             className={
               ehHorizontal
@@ -172,7 +201,9 @@ export function CenaPreview({
       {temPersonagem && assetUrl && (
         <div
           style={posStyle}
-          className="absolute pointer-events-none z-10 flex items-end justify-center"
+          className={`absolute pointer-events-none z-10 flex items-end justify-center ${
+            podeArrastar ? "ring-1 ring-[#ffc928]/60 ring-dashed rounded" : ""
+          }`}
         >
           {personagem?.tipo === "sprite" ? (
             <SpriteThumb
@@ -194,6 +225,58 @@ export function CenaPreview({
           )}
         </div>
       )}
-    </Tag>
+    </>
+  );
+
+  const dropHandlers = onDropImagem
+    ? {
+        onDragOver: (e: React.DragEvent<HTMLElement>) => {
+          e.preventDefault();
+          setDragOverImg(true);
+        },
+        onDragLeave: () => setDragOverImg(false),
+        onDrop: (e: React.DragEvent<HTMLElement>) => {
+          e.preventDefault();
+          setDragOverImg(false);
+          const file = e.dataTransfer.files?.[0];
+          if (file && file.type.startsWith("image/")) {
+            onDropImagem(file);
+          }
+        },
+      }
+    : {};
+
+  if (onClick && !podeArrastar) {
+    return (
+      <button type="button" onClick={onClick} title={title} className={classBase} {...dropHandlers}>
+        {conteudo}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      title={title}
+      className={classBase}
+      {...dropHandlers}
+      onPointerDown={(e) => {
+        if (!podeArrastar) return;
+        arrastandoRef.current = true;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        calcularEAtualizar(e);
+      }}
+      onPointerMove={(e) => {
+        if (!arrastandoRef.current) return;
+        calcularEAtualizar(e);
+      }}
+      onPointerUp={(e) => {
+        if (!arrastandoRef.current) return;
+        arrastandoRef.current = false;
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }}
+    >
+      {conteudo}
+    </div>
   );
 }

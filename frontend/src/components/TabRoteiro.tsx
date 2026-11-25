@@ -7,9 +7,11 @@ import {
   Clock,
   Wand2,
   ArrowRight,
+  Sparkles,
 } from "lucide-react";
 import { api } from "../api";
 import type { AbaId, ProjetoResumo } from "../types";
+import { useProgresso } from "./BarraProgressoGlobal";
 
 interface Props {
   projeto: ProjetoResumo;
@@ -18,11 +20,15 @@ interface Props {
 }
 
 export function TabRoteiro({ projeto, onAtualizado, onIrParaAba }: Props) {
+  const { iniciarTarefaEstimada } = useProgresso();
   const [conteudo, setConteudo] = useState("");
   const [original, setOriginal] = useState("");
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [gerando, setGerando] = useState(false);
+  const [temaIa, setTemaIa] = useState("");
+  const [gerandoIa, setGerandoIa] = useState<"ideias" | "roteiro" | null>(null);
+  const [ideiasGeradas, setIdeiasGeradas] = useState<string | null>(null);
   const [mensagem, setMensagem] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -78,6 +84,14 @@ export function TabRoteiro({ projeto, onAtualizado, onIrParaAba }: Props) {
     setGerando(true);
     setErro(null);
     setMensagem(null);
+    const finalizar = iniciarTarefaEstimada({
+      id: `storyboard-${projeto.nome}`,
+      titulo: `Gerando Storyboard (${projeto.nome})`,
+      etapa: "Decupando cenas e prompts no Gemini",
+      projetoNome: projeto.nome,
+      aba: "storyboard",
+      duracaoEstimadaMs: 22000,
+    });
     try {
       if (conteudo !== original) {
         await api.salvarNarracao(projeto.nome, conteudo);
@@ -97,7 +111,51 @@ export function TabRoteiro({ projeto, onAtualizado, onIrParaAba }: Props) {
           : "Erro ao gerar storyboard automático"
       );
     } finally {
+      finalizar();
       setGerando(false);
+    }
+  }
+
+  async function handleGerarComGemini(modo: "ideias" | "roteiro") {
+    const temaFinal = temaIa.trim() || projeto.nome.replace(/-/g, " ");
+    setGerandoIa(modo);
+    setErro(null);
+    setMensagem(null);
+    const finalizar = iniciarTarefaEstimada({
+      id: `roteiro-${projeto.nome}`,
+      titulo: modo === "ideias" ? `Gerando 3 Ângulos (${projeto.nome})` : `Gerando Narração (${projeto.nome})`,
+      etapa: "Escrevendo com Gemini",
+      projetoNome: projeto.nome,
+      aba: "roteiro",
+      duracaoEstimadaMs: 14000,
+    });
+    try {
+      const res = await api.gerarRoteiro(projeto.nome, {
+        tema: temaFinal,
+        modo,
+        tipo: projeto.tipo,
+        salvar: true,
+      });
+      if (modo === "ideias") {
+        setIdeiasGeradas(res.conteudo);
+        setMensagem(
+          `3 ângulos críticos gerados via Gemini (${res.modelo_ia}) e salvos em 01-ideia-e-roteiro.md.`
+        );
+      } else {
+        setConteudo(res.conteudo);
+        setOriginal(res.conteudo);
+        setMensagem(
+          `Roteiro gerado via Gemini (${res.modelo_ia}) com ${res.palavras ?? 0} palavras e salvo em 02-narracao.txt.`
+        );
+        onAtualizado();
+      }
+    } catch (err) {
+      setErro(
+        err instanceof Error ? err.message : "Erro ao gerar conteúdo com Gemini"
+      );
+    } finally {
+      finalizar();
+      setGerandoIa(null);
     }
   }
 
@@ -230,6 +288,52 @@ export function TabRoteiro({ projeto, onAtualizado, onIrParaAba }: Props) {
           </button>
         </div>
       )}
+
+      {/* Assistente Gemini (Ideias e Roteiro) */}
+      <div className="bg-[#12151d] border border-slate-800 rounded-xl p-3 space-y-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Sparkles className="w-4 h-4 text-[#ffc928] shrink-0" />
+          <input
+            type="text"
+            value={temaIa}
+            onChange={(e) => setTemaIa(e.target.value)}
+            placeholder="Tema, premissa ou ângulo para o Gemini (vazio = usa o nome do projeto)..."
+            className="flex-1 min-w-[240px] bg-[#0e1117] border border-slate-700 focus:border-[#ffc928] rounded-lg px-3 py-1.5 text-xs text-slate-100 outline-none"
+          />
+          <button
+            type="button"
+            disabled={gerandoIa !== null}
+            onClick={() => void handleGerarComGemini("ideias")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-xs font-semibold text-slate-200 cursor-pointer"
+          >
+            {gerandoIa === "ideias" ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5 text-[#ffc928]" />
+            )}
+            Gerar 3 Ângulos (Gemini)
+          </button>
+          <button
+            type="button"
+            disabled={gerandoIa !== null}
+            onClick={() => void handleGerarComGemini("roteiro")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#ffc928]/15 hover:bg-[#ffc928]/25 border border-[#ffc928]/40 disabled:opacity-50 text-xs font-semibold text-[#ffc928] cursor-pointer"
+          >
+            {gerandoIa === "roteiro" ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Wand2 className="w-3.5 h-3.5" />
+            )}
+            Gerar Narração (Gemini)
+          </button>
+        </div>
+
+        {ideiasGeradas && (
+          <pre className="max-h-48 overflow-y-auto bg-[#0e1117] border border-slate-800 rounded-lg p-3 text-[11px] text-slate-300 whitespace-pre-wrap font-sans leading-relaxed">
+            {ideiasGeradas}
+          </pre>
+        )}
+      </div>
 
       <textarea
         value={conteudo}

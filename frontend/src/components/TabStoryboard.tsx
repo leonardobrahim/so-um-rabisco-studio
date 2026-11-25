@@ -15,6 +15,7 @@ import {
   Users,
   FlipHorizontal2,
   AlertTriangle,
+  X,
 } from "lucide-react";
 import { api } from "../api";
 import type {
@@ -28,6 +29,7 @@ import type {
   ProjetoResumo,
 } from "../types";
 import { CenaPreview, extrairNomePng } from "./CenaPreview";
+import { useProgresso } from "./BarraProgressoGlobal";
 import {
   ANIMACOES_PERSONAGEM,
   POSICOES_PERSONAGEM,
@@ -50,6 +52,7 @@ const EFEITOS: EfeitoCena[] = [
 ];
 
 export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
+  const { iniciarTarefaEstimada } = useProgresso();
   const [config, setConfig] = useState<CenasConfig | null>(null);
   const [storyboardMd, setStoryboardMd] = useState("");
   const [imagensCenas, setImagensCenas] = useState<Set<string>>(new Set());
@@ -66,7 +69,8 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
   const [jsonTexto, setJsonTexto] = useState("");
   const [mostrarPrompts, setMostrarPrompts] = useState(false);
   const [copiadoIdx, setCopiadoIdx] = useState<number | null>(null);
-  const [copiadoTodos, setCopiadoTodos] = useState(false);
+  const [copiadoChave, setCopiadoChave] = useState<string | null>(null);
+  const [copiadoTodos, setCopiadoTodos] = useState<"todos" | "fundo" | "personagem" | null>(null);
   const [pacoteChat, setPacoteChat] = useState<string>("");
   const [copiadoPacote, setCopiadoPacote] = useState(false);
   const [promptsColados, setPromptsColados] = useState("");
@@ -74,6 +78,10 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
   const [gerandoDePrompts, setGerandoDePrompts] = useState(false);
   const [mensagem, setMensagem] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [cacheBustImg, setCacheBustImg] = useState(() => Date.now());
+  const [substituindoFundoIdx, setSubstituindoFundoIdx] = useState<number | null>(null);
+  const [substituindoPersIdx, setSubstituindoPersIdx] = useState<number | null>(null);
+  const [dragPersIdx, setDragPersIdx] = useState<number | null>(null);
 
   useEffect(() => {
     let ativo = true;
@@ -129,7 +137,9 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
       }
       return atualizada;
     });
-    atualizarConfig({ ...config, cenas });
+    const novaConfig = { ...config, cenas };
+    atualizarConfig(novaConfig);
+    void api.salvarCenas(projeto.nome, novaConfig).catch(() => {});
   }
 
   function adicionarCena() {
@@ -158,6 +168,14 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
     setSugerindo(true);
     setErro(null);
     setMensagem(null);
+    const finalizar = iniciarTarefaEstimada({
+      id: `sugerir-pers-${projeto.nome}`,
+      titulo: `Sugerindo Personagens (${projeto.nome})`,
+      etapa: "Escolhendo poses e sprites no Gemini",
+      projetoNome: projeto.nome,
+      aba: "storyboard",
+      duracaoEstimadaMs: 10000,
+    });
     try {
       const res = await api.sugerirPersonagem(projeto.nome, config, false);
       atualizarConfig(res.dados);
@@ -171,6 +189,7 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
           : "Erro ao sugerir personagens da biblioteca"
       );
     } finally {
+      finalizar();
       setSugerindo(false);
     }
   }
@@ -185,15 +204,20 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
     setGerando(true);
     setErro(null);
     setMensagem(null);
+    const finalizar = iniciarTarefaEstimada({
+      id: `storyboard-${projeto.nome}`,
+      titulo: `Gerando Storyboard (${projeto.nome})`,
+      etapa: "Decupando cenas e prompts no Gemini",
+      projetoNome: projeto.nome,
+      aba: "storyboard",
+      duracaoEstimadaMs: 22000,
+    });
     try {
       const res = await api.gerarStoryboard(projeto.nome, projeto.tipo);
       atualizarConfig(res.cenas);
       setStoryboardMd(res.storyboard);
       setModoJson(false);
-      const motorTxt =
-        res.geracao_ia === "gemini"
-          ? `Gemini (${res.modelo_ia || "IA"})`
-          : "Fallback local";
+      const motorTxt = `Gemini (${res.modelo_ia || "IA"})`;
       setMensagem(
         `Gerado via ${motorTxt} a partir de ${
           res.origem === "timestamps" ? "03-timestamps.json" : "02-narracao.txt"
@@ -210,6 +234,7 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
           : "Erro ao gerar storyboard automático"
       );
     } finally {
+      finalizar();
       setGerando(false);
     }
   }
@@ -251,21 +276,146 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
     .split(/\r?\n/)
     .filter((line) => /^\[\d{2}:\d{2}\]/.test(line.trim()));
 
-  async function copiarPrompt(texto: string, idx: number) {
+  async function substituirFundoCena(idx: number, file: File | undefined) {
+    if (!config || !file || !file.type.startsWith("image/")) return;
+    const cena = config.cenas[idx];
+    if (!cena) return;
+    const alvoPng =
+      extrairNomePng(cena.fundo?.arquivo || cena.arquivo) ||
+      `cena_${String(idx + 1).padStart(2, "0")}.png`;
+    setSubstituindoFundoIdx(idx);
+    setErro(null);
+    try {
+      const res = await api.uploadImagemCena(projeto.nome, alvoPng, file);
+      setImagensCenas(new Set(res.cenas_geradas));
+      setCacheBustImg(Date.now());
+      onAtualizado();
+    } catch (err) {
+      setErro(
+        err instanceof Error ? err.message : "Erro ao substituir fundo da cena"
+      );
+    } finally {
+      setSubstituindoFundoIdx(null);
+    }
+  }
+
+  async function enviarPersonagemCena(idx: number, file: File | undefined) {
+    if (!config || !file || !file.type.startsWith("image/")) return;
+    const cena = config.cenas[idx];
+    if (!cena) return;
+    setSubstituindoPersIdx(idx);
+    setErro(null);
+    try {
+      const res = await api.uploadPersonagemAsset(file, {
+        pasta: "custom",
+        modo: "poses",
+        removerFundo: true,
+      });
+      setBiblioteca({ pastas: res.pastas, assets: res.assets });
+      const novo = res.assets.find((a) => a.id === res.asset_id);
+      const persAtual = cena.personagem;
+      const formato = config.formato || projeto.formato;
+      const proximoPers = {
+        tipo: res.tipo,
+        fonte: novo?.fonte || "protagonista",
+        asset: res.asset_id,
+        posicao: persAtual?.posicao || (formato === "16:9" ? "right" : "center"),
+        x: persAtual?.x,
+        y: persAtual?.y,
+        escala: persAtual?.escala ?? 1.0,
+        flip: persAtual?.flip ?? false,
+        animacao:
+          persAtual?.animacao && persAtual.animacao !== "none"
+            ? persAtual.animacao
+            : res.tipo === "sprite"
+            ? ("slide-in-left" as const)
+            : ("pop-in" as const),
+        tags: novo?.tags || persAtual?.tags || [],
+        ...(res.tipo === "sprite" && novo
+          ? {
+              sprite: {
+                frames: novo.frames,
+                quadro: novo.quadro,
+                fps: novo.fps,
+              },
+            }
+          : {}),
+      };
+      atualizarCena(idx, { personagem: proximoPers });
+      setMensagem(
+        `${res.tipo === "sprite" ? "Sprite 2x2 animado" : "Pose solo (fundo removido)"} aplicado na cena ${idx + 1}. Clique em Salvar (Ctrl+S) para gravar cenas.json.`
+      );
+    } catch (err) {
+      setErro(
+        err instanceof Error
+          ? err.message
+          : "Erro ao processar pose/sprite para a cena"
+      );
+    } finally {
+      setSubstituindoPersIdx(null);
+    }
+  }
+
+  function selecionarTextoElemento(el: HTMLElement | null) {
+    if (!el) return;
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+      el.focus();
+      el.select();
+      return;
+    }
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }
+
+  async function copiarPrompt(texto: string, idx: number, el?: HTMLElement | null) {
+    selecionarTextoElemento(el ?? null);
     await navigator.clipboard.writeText(texto);
     setCopiadoIdx(idx);
     setTimeout(() => setCopiadoIdx(null), 1500);
   }
 
-  async function copiarTodosPrompts() {
-    const conteudo =
-      promptsExtraidos.length > 0
-        ? promptsExtraidos.join("\n\n")
-        : storyboardMd.trim();
+  async function copiarPromptCamada(texto: string, chave: string, el?: HTMLElement | null) {
+    if (!texto.trim()) return;
+    selecionarTextoElemento(el ?? null);
+    await navigator.clipboard.writeText(texto);
+    setCopiadoChave(chave);
+    setTimeout(() => setCopiadoChave(null), 1500);
+  }
+
+  async function copiarTodosPrompts(modo: "todos" | "fundo" | "personagem" = "todos") {
+    const cenas = config?.cenas || [];
+    let conteudo = "";
+
+    if (cenas.length > 0) {
+      const lista: string[] = [];
+      for (const c of cenas) {
+        const fundo = (c.prompt_fundo ?? c.fundo?.prompt ?? "").trim();
+        const pers = (c.prompt_personagem ?? c.personagem?.prompt ?? "").trim();
+        if (modo === "fundo") {
+          if (fundo) lista.push(fundo);
+        } else if (modo === "personagem") {
+          if (pers) lista.push(pers);
+        } else {
+          if (fundo) lista.push(fundo);
+          if (pers) lista.push(pers);
+        }
+      }
+      conteudo = lista.join("\n\n");
+    }
+
+    if (!conteudo) {
+      conteudo =
+        promptsExtraidos.length > 0
+          ? promptsExtraidos.join("\n\n")
+          : storyboardMd.trim();
+    }
     if (!conteudo) return;
     await navigator.clipboard.writeText(conteudo);
-    setCopiadoTodos(true);
-    setTimeout(() => setCopiadoTodos(false), 2000);
+    setCopiadoTodos(modo);
+    setTimeout(() => setCopiadoTodos(null), 2000);
   }
 
   async function sincronizarArquivoPrompts() {
@@ -332,6 +482,14 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
     setGerandoDePrompts(true);
     setErro(null);
     setMensagem(null);
+    const finalizar = iniciarTarefaEstimada({
+      id: `cenas-prompts-${projeto.nome}`,
+      titulo: `Montando Cenas de Prompts (${projeto.nome})`,
+      etapa: "Sincronizando legendas e personagens no Gemini",
+      projetoNome: projeto.nome,
+      aba: "storyboard",
+      duracaoEstimadaMs: 14000,
+    });
     try {
       const res = await api.gerarCenasDePrompts(projeto.nome, projeto.tipo);
       atualizarConfig(res.cenas);
@@ -347,6 +505,7 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
           : "Erro ao gerar cenas a partir dos prompts salvos"
       );
     } finally {
+      finalizar();
       setGerandoDePrompts(false);
     }
   }
@@ -464,25 +623,66 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
             Prompts ({promptsExtraidos.length})
           </button>
 
-          {promptsExtraidos.length > 0 && (
+          {(config.cenas.length > 0 || promptsExtraidos.length > 0 || storyboardMd.trim()) && (
             <>
               <button
                 type="button"
-                onClick={() => void copiarTodosPrompts()}
+                onClick={() => void copiarTodosPrompts("todos")}
+                title="Copia todas as cenas mantendo Fundo e Personagem separados"
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-700 bg-[#0e1117] hover:border-[#ffc928]/60 text-slate-200 text-xs font-medium transition cursor-pointer"
               >
-                {copiadoTodos ? (
+                {copiadoTodos === "todos" ? (
                   <>
                     <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    Copiados!
+                    Todos copiados!
                   </>
                 ) : (
                   <>
                     <Copy className="w-3.5 h-3.5 text-[#ffc928]" />
-                    Copiar Todos
+                    Copiar Todos (Fundo + Pers.)
                   </>
                 )}
               </button>
+              {config.cenas.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void copiarTodosPrompts("fundo")}
+                    title="Copia apenas os prompts de Fundo de todas as cenas"
+                    className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg border border-slate-700 bg-[#0e1117] hover:border-sky-400/60 text-sky-200 text-xs font-medium transition cursor-pointer"
+                  >
+                    {copiadoTodos === "fundo" ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        Fundos copiados!
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-sky-400" />
+                        Só Fundos
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void copiarTodosPrompts("personagem")}
+                    title="Copia apenas os prompts de Personagem de todas as cenas"
+                    className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg border border-slate-700 bg-[#0e1117] hover:border-[#ffc928]/60 text-amber-200 text-xs font-medium transition cursor-pointer"
+                  >
+                    {copiadoTodos === "personagem" ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        Personagens copiados!
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-[#ffc928]" />
+                        Só Personagens
+                      </>
+                    )}
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => void sincronizarArquivoPrompts()}
@@ -661,7 +861,10 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                   <p className="text-slate-300 leading-relaxed line-clamp-2">{p}</p>
                   <button
                     type="button"
-                    onClick={() => void copiarPrompt(p, idx)}
+                    onClick={(e) => {
+                      const pEl = e.currentTarget.parentElement?.querySelector("p");
+                      void copiarPrompt(p, idx, pEl ?? null);
+                    }}
                     className="shrink-0 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1 cursor-pointer"
                   >
                     {copiadoIdx === idx ? (
@@ -757,6 +960,7 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                   <th className="py-2.5 px-3 w-16">Dur.</th>
                   <th className="py-2.5 px-3 w-28">Câmera Fundo</th>
                   <th className="py-2.5 px-3">Texto de Impacto</th>
+                  <th className="py-2.5 px-3 min-w-[320px]">Prompts (Fundo / Personagem)</th>
                   <th className="py-2.5 px-3 w-16">Escala</th>
                   <th className="py-2.5 px-3 w-10"></th>
                 </tr>
@@ -792,16 +996,34 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                         {String(idx + 1).padStart(2, "0")}
                       </td>
                       <td className="py-2 px-3">
-                        <CenaPreview
-                          projetoNome={projeto.nome}
-                          formato={config.formato || projeto.formato}
-                          cena={cena}
-                          temImagemFundo={temImagem}
-                          assetsBiblioteca={biblioteca.assets}
-                          tamanho="thumb"
-                          onClick={() => setCenaEditandoIdx(idx)}
-                          title="Clique para editar pose/sprite e posição do personagem"
-                        />
+                        <div className="flex flex-col items-start gap-1">
+                          <CenaPreview
+                            projetoNome={projeto.nome}
+                            formato={config.formato || projeto.formato}
+                            cena={cena}
+                            temImagemFundo={temImagem}
+                            assetsBiblioteca={biblioteca.assets}
+                            tamanho="thumb"
+                            cacheBust={cacheBustImg}
+                            onDropImagem={(file) => void substituirFundoCena(idx, file)}
+                            onClick={() => setCenaEditandoIdx(idx)}
+                            title="Arraste uma imagem para trocar o fundo ou clique para editar pose/sprite"
+                          />
+                          <label className="text-[10px] text-sky-300 hover:text-sky-200 cursor-pointer underline">
+                            {substituindoFundoIdx === idx ? "Enviando..." : "Trocar fundo (ou arraste)"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              hidden
+                              disabled={substituindoFundoIdx !== null}
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                e.target.value = "";
+                                void substituirFundoCena(idx, file);
+                              }}
+                            />
+                          </label>
+                        </div>
                       </td>
                       <td className="py-2 px-3">
                         <input
@@ -814,7 +1036,22 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                           className="w-full min-w-[160px] bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-2 py-1 font-mono text-[11px] text-slate-200 outline-none"
                         />
                       </td>
-                      <td className="py-2 px-3">
+                      <td
+                        className={`py-2 px-3 transition ${
+                          dragPersIdx === idx ? "bg-[#ffc928]/10 ring-2 ring-inset ring-[#ffc928]" : ""
+                        }`}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setDragPersIdx(idx);
+                        }}
+                        onDragLeave={() => setDragPersIdx(null)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setDragPersIdx(null);
+                          const file = e.dataTransfer.files?.[0];
+                          void enviarPersonagemCena(idx, file);
+                        }}
+                      >
                         <div className="flex flex-col gap-1.5">
                           <div className="flex items-center gap-1.5">
                             <button
@@ -825,10 +1062,14 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                                   ? "bg-[#0e1117] border-slate-700 hover:border-[#ffc928] text-slate-200"
                                   : "bg-[#0e1117]/60 border-slate-800 hover:border-slate-600 text-slate-400"
                               }`}
-                              title="Trocar pose/sprite e posição"
+                              title="Clique para editar ou arraste uma pose/sprite PNG aqui"
                             >
                               <span className="truncate font-mono text-[11px]">
-                                {temP ? p?.asset || "escolher..." : "Sem personagem"}
+                                {substituindoPersIdx === idx
+                                  ? "Processando pose/sprite..."
+                                  : temP
+                                  ? p?.asset || "escolher..."
+                                  : "Arraste pose/sprite ou clique"}
                               </span>
                               <span
                                 className={`shrink-0 px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${
@@ -842,6 +1083,25 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                                 {p?.tipo || "none"}
                               </span>
                             </button>
+                            {temP && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  atualizarCena(idx, {
+                                    personagem: {
+                                      tipo: "none",
+                                      fonte: p?.fonte || "protagonista",
+                                      prompt: p?.prompt,
+                                      tags: p?.tags || [],
+                                    },
+                                  })
+                                }
+                                title="Remover pose/sprite desta cena (não exclui da biblioteca)"
+                                className="p-1 rounded border border-slate-800 bg-[#0e1117] text-slate-400 hover:text-rose-400 hover:border-rose-500/40 cursor-pointer shrink-0"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             {!assetExiste && (
                               <span
                                 title="Asset não encontrado na biblioteca atual"
@@ -989,6 +1249,100 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
                         />
                       </td>
                       <td className="py-2 px-3">
+                        <div className="flex flex-col gap-1.5 min-w-[300px]">
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-sky-300">
+                                Fundo
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  const ta = e.currentTarget.closest(".space-y-1")?.querySelector("textarea");
+                                  void copiarPromptCamada(
+                                    cena.prompt_fundo ?? cena.fundo?.prompt ?? "",
+                                    `fundo-${idx}`,
+                                    ta ?? null
+                                  );
+                                }}
+                                className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-200 flex items-center gap-1 cursor-pointer"
+                              >
+                                {copiadoChave === `fundo-${idx}` ? (
+                                  <>
+                                    <Check className="w-2.5 h-2.5 text-emerald-400" /> Copiado
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-2.5 h-2.5" /> Copiar Fundo
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                            <textarea
+                              rows={2}
+                              value={cena.prompt_fundo ?? cena.fundo?.prompt ?? ""}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                atualizarCena(idx, {
+                                  prompt_fundo: val,
+                                  fundo: {
+                                    arquivo: cena.fundo?.arquivo || cena.arquivo,
+                                    prompt: val,
+                                  },
+                                });
+                              }}
+                              placeholder="Prompt do fundo (sem pessoas)..."
+                              className="w-full bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-2 py-1 text-[10px] text-slate-300 outline-none resize-y"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#ffc928]">
+                                Personagem (#FFFFFF)
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  const ta = e.currentTarget.closest(".space-y-1")?.querySelector("textarea");
+                                  void copiarPromptCamada(
+                                    cena.prompt_personagem ?? cena.personagem?.prompt ?? "",
+                                    `pers-${idx}`,
+                                    ta ?? null
+                                  );
+                                }}
+                                className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-200 flex items-center gap-1 cursor-pointer"
+                              >
+                                {copiadoChave === `pers-${idx}` ? (
+                                  <>
+                                    <Check className="w-2.5 h-2.5 text-emerald-400" /> Copiado
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-2.5 h-2.5" /> Copiar Pers.
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                            <textarea
+                              rows={2}
+                              value={cena.prompt_personagem ?? cena.personagem?.prompt ?? ""}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                atualizarCena(idx, {
+                                  prompt_personagem: val,
+                                  personagem: {
+                                    ...(cena.personagem ?? { tipo: "none", fonte: "protagonista" }),
+                                    prompt: val,
+                                  },
+                                });
+                              }}
+                              placeholder="Prompt do personagem isolado (#FFFFFF)..."
+                              className="w-full bg-[#0e1117] border border-slate-800 focus:border-[#ffc928] rounded px-2 py-1 text-[10px] text-slate-300 outline-none resize-y"
+                            />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-2 px-3">
                         <input
                           type="number"
                           step="0.1"
@@ -1025,6 +1379,7 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
           projetoNome={projeto.nome}
           formato={config.formato || projeto.formato}
           indiceCena={cenaEditandoIdx}
+          totalCenas={config.cenas.length}
           cena={config.cenas[cenaEditandoIdx]}
           temImagemFundo={imagensCenas.has(
             extrairNomePng(
@@ -1033,6 +1388,9 @@ export function TabStoryboard({ projeto, onAtualizado, onIrParaAba }: Props) {
             )
           )}
           biblioteca={biblioteca}
+          cacheBust={cacheBustImg}
+          onTrocarFundo={(file) => void substituirFundoCena(cenaEditandoIdx, file)}
+          onMudarCena={(novoIdx) => setCenaEditandoIdx(novoIdx)}
           onAtualizarCena={(patch) => atualizarCena(cenaEditandoIdx, patch)}
           onBibliotecaAtualizada={(nova) => setBiblioteca(nova)}
           onFechar={() => setCenaEditandoIdx(null)}

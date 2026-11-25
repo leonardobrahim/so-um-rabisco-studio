@@ -12,6 +12,10 @@ frontend/dist/
 projetos/
 template-hyperframes/assets_atual/
 template-hyperframes/.hyperframes/
+template-remotion/node_modules/
+template-remotion/public/assets_atual/
+template-remotion/public/cenas.json
+template-remotion/out/
 prompts_imagens.txt
 tempos_imagens.txt
 prompts_completos.txt

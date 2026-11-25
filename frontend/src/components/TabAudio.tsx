@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import type { AbaId, ProjetoResumo, TimestampsData } from "../types";
+import { useProgresso } from "./BarraProgressoGlobal";
 
 interface Props {
   projeto: ProjetoResumo;
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function TabAudio({ projeto, onAtualizado, onIrParaAba }: Props) {
+  const { iniciarTarefaEstimada } = useProgresso();
   const [timestamps, setTimestamps] = useState<TimestampsData | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [processando, setProcessando] = useState(false);
@@ -69,22 +71,36 @@ export function TabAudio({ projeto, onAtualizado, onIrParaAba }: Props) {
     setProcessando(true);
     setErro(null);
     setLog(null);
+    const finalizar = iniciarTarefaEstimada({
+      id: `audio-${projeto.nome}`,
+      titulo: `Processando Áudio (${projeto.nome})`,
+      etapa: autoGerarSb ? "Transcrevendo (Whisper) + Storyboard (Gemini)" : "Extraindo timestamps (Whisper)",
+      projetoNome: projeto.nome,
+      aba: "audio",
+      duracaoEstimadaMs: autoGerarSb ? 28000 : 15000,
+    });
     try {
       const res = await api.uploadAudio(projeto.nome, file, autoGerarSb);
       setTimestamps(res.timestamps);
       setAudioDisponivel(true);
       setAudioVersion(Date.now());
       const resumoSb = res.storyboard_gerado
-        ? `\nStoryboard gerado automaticamente: ${res.storyboard_gerado.qtd_cenas} cenas (${res.storyboard_gerado.formato}) salvas em cenas.json, 04-storyboard-e-prompts.md e prompts_imagens.txt.`
+        ? `\nStoryboard gerado automaticamente via Gemini: ${res.storyboard_gerado.qtd_cenas} cenas (${res.storyboard_gerado.formato}) salvas em cenas.json, 04-storyboard-e-prompts.md e prompts_imagens.txt.`
         : "";
       setLog(
         (res.log || "Áudio salvo e 03-timestamps.json gerado com sucesso!") +
           resumoSb
       );
+      if (res.storyboard_erro) {
+        setErro(
+          `Áudio transcrito com sucesso, mas a geração do storyboard via Gemini falhou: ${res.storyboard_erro}`
+        );
+      }
       onAtualizado();
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Erro ao processar áudio");
     } finally {
+      finalizar();
       setProcessando(false);
     }
   }
@@ -92,6 +108,14 @@ export function TabAudio({ projeto, onAtualizado, onIrParaAba }: Props) {
   async function gerarStoryboardAgora() {
     setGerandoSb(true);
     setErro(null);
+    const finalizar = iniciarTarefaEstimada({
+      id: `storyboard-${projeto.nome}`,
+      titulo: `Gerando Storyboard (${projeto.nome})`,
+      etapa: "Decupando cenas no Gemini",
+      projetoNome: projeto.nome,
+      aba: "storyboard",
+      duracaoEstimadaMs: 22000,
+    });
     try {
       const res = await api.gerarStoryboard(projeto.nome, projeto.tipo);
       setLog(
@@ -103,6 +127,7 @@ export function TabAudio({ projeto, onAtualizado, onIrParaAba }: Props) {
         err instanceof Error ? err.message : "Erro ao gerar storyboard"
       );
     } finally {
+      finalizar();
       setGerandoSb(false);
     }
   }
